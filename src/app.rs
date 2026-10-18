@@ -67,6 +67,8 @@ pub enum ConfirmAction {
     SwitchGpu(GpuMode),
     ApplyFanCurve(PlatformProfile, FanCurve),
     ResetFanCurve(PlatformProfile),
+    DiscardFanChangesSwitchFan(usize),
+    DiscardFanChangesSwitchProfile(PlatformProfile),
 }
 
 pub struct AppState<B: Backend> {
@@ -98,9 +100,16 @@ pub struct AppState<B: Backend> {
 
     // Fan Curve State
     pub fan_curves: Vec<FanCurve>,
+    pub applied_fan_curves: Vec<FanCurve>,
     pub active_fan_idx: usize,
     pub active_point_idx: usize,
     pub last_known_good_curve: Option<FanCurve>,
+    pub show_other_fan_overlay: bool,
+    pub show_point_table: bool,
+    pub apply_all_fans: bool,
+    pub fan_clamp_hint: Option<(String, Instant)>,
+    pub allow_unsafe_floor: bool,
+    pub current_preset_idx: usize,
 
     // Aura RGB State
     pub aura_brightness: u32,
@@ -190,10 +199,17 @@ impl<B: Backend> AppState<B> {
             gpu_pending_mode,
             gpu_pending_action,
             gpu_selected_idx,
+            applied_fan_curves: fan_curves.clone(),
             fan_curves,
             active_fan_idx: 0,
             active_point_idx: 0,
             last_known_good_curve,
+            show_other_fan_overlay: false,
+            show_point_table: false,
+            apply_all_fans: false,
+            fan_clamp_hint: None,
+            allow_unsafe_floor: false,
+            current_preset_idx: 1, // Balanced
             aura_brightness,
             aura_mode,
             aura_data,
@@ -209,6 +225,44 @@ impl<B: Backend> AppState<B> {
 
     pub fn set_status(&mut self, msg: impl Into<String>, is_error: bool) {
         self.status_message = Some((msg.into(), is_error, Instant::now()));
+    }
+
+    pub fn set_clamp_hint(&mut self, hint: impl Into<String>) {
+        self.fan_clamp_hint = Some((hint.into(), Instant::now()));
+    }
+
+    pub fn is_fan_curve_modified(&self) -> bool {
+        if let (Some(cur), Some(appl)) = (self.fan_curves.get(self.active_fan_idx), self.applied_fan_curves.get(self.active_fan_idx)) {
+            cur != appl
+        } else {
+            false
+        }
+    }
+
+    pub fn active_point_is_modified(&self, idx: usize) -> bool {
+        if let (Some(cur), Some(appl)) = (self.fan_curves.get(self.active_fan_idx), self.applied_fan_curves.get(self.active_fan_idx)) {
+            if let (Some(p_cur), Some(p_appl)) = (cur.points.get(idx), appl.points.get(idx)) {
+                return p_cur != p_appl;
+            }
+        }
+        false
+    }
+
+    pub fn clear_expired_messages(&mut self) -> bool {
+        let mut changed = false;
+        if let Some((_, _, inst)) = &self.status_message {
+            if inst.elapsed().as_secs() >= 4 {
+                self.status_message = None;
+                changed = true;
+            }
+        }
+        if let Some((_, inst)) = &self.fan_clamp_hint {
+            if inst.elapsed().as_secs() >= 4 {
+                self.fan_clamp_hint = None;
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub async fn refresh_sensors(&mut self) {

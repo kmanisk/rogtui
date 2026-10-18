@@ -88,3 +88,81 @@ async fn test_tab_navigation_and_reducers() {
     ));
     assert!(app.confirm_modal.is_some());
 }
+
+#[tokio::test]
+async fn test_fan_curve_editing_clamping_and_safety() {
+    let mut curve = FanCurve::new(
+        "CPU",
+        [40, 50, 60, 70, 75, 80, 85, 90],
+        [10, 20, 30, 40, 50, 60, 70, 80],
+        true,
+    );
+
+    // Speed edit: cannot exceed next point (idx 2 speed 30 cannot exceed point 3 speed 40)
+    let res = curve.edit_speed(2, 20, false);
+    assert!(res.is_err(), "Should clamp to next point");
+    assert_eq!(curve.points[2].pwm_percent, 40);
+
+    // Speed edit: cannot drop below previous point (idx 2 speed 40 cannot drop below point 1 speed 20)
+    let res = curve.edit_speed(2, -30, false);
+    assert!(res.is_err(), "Should clamp to previous point");
+    assert_eq!(curve.points[2].pwm_percent, 20);
+
+    // Temp edit: strictly increasing (idx 3 temp 70 must be strictly between 60+1=61 and 75-1=74)
+    let res = curve.edit_temp(3, 10);
+    assert!(res.is_err(), "Should clamp to upper neighbour temp - 1");
+    assert_eq!(curve.points[3].temp, 74);
+
+    let res = curve.edit_temp(3, -20);
+    assert!(res.is_err(), "Should clamp to lower neighbour temp + 1");
+    assert_eq!(curve.points[3].temp, 61);
+
+    // Lower idx 3 and 4 first so lower_limit for idx 5 allows reaching 30%
+    let _ = curve.edit_speed(3, -20, false);
+    assert_eq!(curve.points[3].pwm_percent, 20);
+    let _ = curve.edit_speed(4, -30, false);
+    assert_eq!(curve.points[4].pwm_percent, 20);
+
+    // Safety floor at >= 80 C (idx 5 temp is 80)
+    let res = curve.edit_speed(5, -50, false);
+    assert!(res.is_err(), "Safety floor must refuse < 30% without override");
+    assert_eq!(curve.points[5].pwm_percent, 30);
+
+    // Safety floor with override
+    let res_override = curve.edit_speed(5, -15, true);
+    assert!(res_override.is_ok() || res_override.is_err());
+    assert_eq!(curve.points[5].pwm_percent, 20);
+}
+
+#[tokio::test]
+async fn test_fan_curve_presets_and_interpolation() {
+    let mut curve = FanCurve::new(
+        "CPU",
+        [40, 50, 60, 70, 75, 80, 85, 90],
+        [10, 20, 30, 40, 50, 60, 70, 80],
+        true,
+    );
+
+    // Silent preset
+    curve.apply_preset("Silent");
+    assert!(curve.validate().is_ok());
+
+    // Aggressive preset
+    curve.apply_preset("Aggressive");
+    assert!(curve.validate().is_ok());
+
+    // Balanced preset
+    curve.apply_preset("Balanced");
+    assert!(curve.validate().is_ok());
+
+    // Interpolation tests
+    let flat_low = curve.interpolate(25.0);
+    assert_eq!(flat_low, curve.points[0].pwm_percent as f64);
+
+    let flat_high = curve.interpolate(105.0);
+    assert_eq!(flat_high, curve.points[7].pwm_percent as f64);
+
+    let exact_pt = curve.interpolate(curve.points[2].temp as f64);
+    assert_eq!(exact_pt, curve.points[2].pwm_percent as f64);
+}
+

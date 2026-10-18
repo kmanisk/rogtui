@@ -116,9 +116,12 @@ async fn app_loop<B: backend::Backend>(
                 }
             }
             _ = ticker.tick() => {
-                // Sensor telemetry polling only while Dashboard or FanCurves tab is visible
-                if matches!(app.current_tab, ActiveTab::Dashboard | ActiveTab::FanCurves) {
+                let had_expired = app.clear_expired_messages();
+                let is_telemetry_tab = matches!(app.current_tab, ActiveTab::Dashboard | ActiveTab::FanCurves);
+                if is_telemetry_tab {
                     app.refresh_sensors().await;
+                }
+                if is_telemetry_tab || had_expired {
                     terminal.draw(|f| ui::render_ui(f, &app))?;
                 }
             }

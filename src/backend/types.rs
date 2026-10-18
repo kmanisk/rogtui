@@ -88,6 +88,116 @@ impl FanCurve {
         )
     }
 
+    pub fn interpolate(&self, current_temp: f64) -> f64 {
+        if self.points.is_empty() {
+            return 0.0;
+        }
+        let first = &self.points[0];
+        if current_temp <= first.temp as f64 {
+            return first.pwm_percent as f64;
+        }
+        let last = &self.points[self.points.len() - 1];
+        if current_temp >= last.temp as f64 {
+            return last.pwm_percent as f64;
+        }
+
+        for i in 0..self.points.len() - 1 {
+            let p1 = &self.points[i];
+            let p2 = &self.points[i + 1];
+            if current_temp >= p1.temp as f64 && current_temp <= p2.temp as f64 {
+                let range = (p2.temp - p1.temp) as f64;
+                if range <= 0.0 {
+                    return p1.pwm_percent as f64;
+                }
+                let ratio = (current_temp - p1.temp as f64) / range;
+                return p1.pwm_percent as f64 + ratio * ((p2.pwm_percent as i16 - p1.pwm_percent as i16) as f64);
+            }
+        }
+        last.pwm_percent as f64
+    }
+
+    pub fn edit_speed(&mut self, idx: usize, delta: i16, allow_unsafe_floor: bool) -> Result<(), String> {
+        if idx >= self.points.len() {
+            return Err("Index out of bounds".to_string());
+        }
+        let cur = self.points[idx].pwm_percent as i16;
+        let target = cur + delta;
+
+        let lower_limit = if idx > 0 { self.points[idx - 1].pwm_percent as i16 } else { 0 };
+        let upper_limit = if idx + 1 < self.points.len() { self.points[idx + 1].pwm_percent as i16 } else { 100 };
+
+        let mut clamped = target.clamp(lower_limit, upper_limit).clamp(0, 100);
+
+        // Safety floor rule: at or above 80 C, minimum speed is 30% unless override confirmed
+        if self.points[idx].temp >= 80 && clamped < 30 && !allow_unsafe_floor {
+            clamped = 30;
+            self.points[idx].pwm_percent = clamped as u8;
+            return Err("Safety policy: minimum 30% at >= 80 C (use Shift+O to override)".to_string());
+        }
+
+        self.points[idx].pwm_percent = clamped as u8;
+
+        if target < lower_limit {
+            return Err(format!("Limited by previous point (cannot be below {lower_limit}%)"));
+        }
+        if target > upper_limit {
+            return Err(format!("Limited by next point (cannot exceed {upper_limit}%)"));
+        }
+        Ok(())
+    }
+
+    pub fn edit_temp(&mut self, idx: usize, delta: i16) -> Result<(), String> {
+        if idx >= self.points.len() {
+            return Err("Index out of bounds".to_string());
+        }
+        let cur = self.points[idx].temp as i16;
+        let target = cur + delta;
+
+        let lower_limit = if idx > 0 { self.points[idx - 1].temp as i16 + 1 } else { 30 };
+        let upper_limit = if idx + 1 < self.points.len() { self.points[idx + 1].temp as i16 - 1 } else { 100 };
+
+        let clamped = target.clamp(lower_limit, upper_limit).clamp(30, 100);
+        self.points[idx].temp = clamped as u8;
+
+        if target < lower_limit {
+            return Err(format!("Limited by previous point (must be > {} C)", lower_limit - 1));
+        }
+        if target > upper_limit {
+            return Err(format!("Limited by next point (must be < {} C)", upper_limit + 1));
+        }
+        Ok(())
+    }
+
+    pub fn apply_preset(&mut self, preset_name: &str) {
+        match preset_name {
+            "Silent" => {
+                let temps = [45, 55, 65, 75, 82, 88, 92, 98];
+                let speeds = [0, 10, 20, 35, 50, 65, 80, 100];
+                for (i, p) in self.points.iter_mut().enumerate() {
+                    p.temp = temps[i];
+                    p.pwm_percent = speeds[i];
+                }
+            }
+            "Aggressive" => {
+                let temps = [40, 50, 58, 65, 72, 78, 85, 92];
+                let speeds = [15, 30, 45, 60, 75, 85, 95, 100];
+                for (i, p) in self.points.iter_mut().enumerate() {
+                    p.temp = temps[i];
+                    p.pwm_percent = speeds[i];
+                }
+            }
+            _ => {
+                // Balanced
+                let temps = [45, 55, 65, 72, 78, 84, 90, 96];
+                let speeds = [5, 15, 30, 50, 65, 78, 88, 100];
+                for (i, p) in self.points.iter_mut().enumerate() {
+                    p.temp = temps[i];
+                    p.pwm_percent = speeds[i];
+                }
+            }
+        }
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.points.len() != 8 {
             return Err("Fan curve must contain exactly 8 control points");

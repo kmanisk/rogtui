@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{ActiveTab, AppState, ConfirmAction};
-use crate::backend::types::PlatformProfile;
+use crate::backend::types::{PlatformProfile, RgbColor};
 use crate::backend::Backend;
 
 pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
@@ -33,6 +33,10 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                             Ok(()) => {
                                 app.last_known_good_curve = Some(curve);
                                 let _ = app.backend.set_fan_curves_enabled(profile, true).await;
+                                if let Ok(new_curves) = app.backend.get_fan_curves(profile).await {
+                                    app.applied_fan_curves = new_curves.clone();
+                                    app.fan_curves = new_curves;
+                                }
                                 app.set_status(format!("Fan curve applied to {} successfully", profile.as_str()), false);
                             }
                             Err(e) => app.set_status(format!("Failed to apply curve: {e}"), true),
@@ -41,10 +45,38 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                     ConfirmAction::ResetFanCurve(profile) => {
                         match app.backend.set_curves_to_defaults(profile).await {
                             Ok(()) => {
-                                app.fan_curves = app.backend.get_fan_curves(profile).await.unwrap_or_default();
+                                let reloaded = app.backend.get_fan_curves(profile).await.unwrap_or_default();
+                                app.applied_fan_curves = reloaded.clone();
+                                app.fan_curves = reloaded;
                                 app.set_status(format!("Fan curves reset to defaults for {}", profile.as_str()), false);
                             }
                             Err(e) => app.set_status(format!("Failed to reset curves: {e}"), true),
+                        }
+                    }
+                    ConfirmAction::DiscardFanChangesSwitchFan(target_idx) => {
+                        if let Some(appl) = app.applied_fan_curves.get(app.active_fan_idx).cloned() {
+                            if let Some(curr) = app.fan_curves.get_mut(app.active_fan_idx) {
+                                *curr = appl;
+                            }
+                        }
+                        app.active_fan_idx = target_idx;
+                        let fan_name = app.fan_curves.get(target_idx).map(|c| c.fan_name.as_str()).unwrap_or("Fan");
+                        app.set_status(format!("Switched to {fan_name} (edits discarded)"), false);
+                    }
+                    ConfirmAction::DiscardFanChangesSwitchProfile(target_profile) => {
+                        if let Some(appl) = app.applied_fan_curves.get(app.active_fan_idx).cloned() {
+                            if let Some(curr) = app.fan_curves.get_mut(app.active_fan_idx) {
+                                *curr = appl;
+                            }
+                        }
+                        if let Err(e) = app.backend.set_platform_profile(target_profile).await {
+                            app.set_status(format!("Failed to switch profile: {e}"), true);
+                        } else {
+                            app.platform_profile = target_profile;
+                            let new_curves = app.backend.get_fan_curves(target_profile).await.unwrap_or_default();
+                            app.applied_fan_curves = new_curves.clone();
+                            app.fan_curves = new_curves;
+                            app.set_status(format!("Platform Profile: {}", target_profile.as_str()), false);
                         }
                     }
                 }
@@ -90,10 +122,18 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                 PlatformProfile::Performance => PlatformProfile::Quiet,
                 PlatformProfile::Custom => PlatformProfile::Balanced,
             };
-            if let Err(e) = app.backend.set_platform_profile(next_p).await {
+            if app.is_fan_curve_modified() {
+                app.confirm_modal = Some((
+                    format!("Discard unsaved fan curve edits and switch to {}?", next_p.as_str()),
+                    ConfirmAction::DiscardFanChangesSwitchProfile(next_p),
+                ));
+            } else if let Err(e) = app.backend.set_platform_profile(next_p).await {
                 app.set_status(format!("Failed to cycle profile: {e}"), true);
             } else {
                 app.platform_profile = next_p;
+                let new_curves = app.backend.get_fan_curves(next_p).await.unwrap_or_default();
+                app.applied_fan_curves = new_curves.clone();
+                app.fan_curves = new_curves;
                 app.set_status(format!("Platform Profile: {}", next_p.as_str()), false);
             }
             return;
@@ -236,31 +276,67 @@ fn cycle_profile(current: PlatformProfile, dir: i32) -> PlatformProfile {
 
 async fn handle_fancurve<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
     match key.code {
-        KeyCode::Char('f') => {
-            if !app.fan_curves.is_empty() {
-                app.active_fan_idx = (app.active_fan_idx + 1) % app.fan_curves.len();
-            }
-        }
-        KeyCode::Left | KeyCode::Char('h') => {
+        // Point selection: h/l or Left/Right (without Shift)
+        KeyCode::Left | KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::SHIFT) => {
             app.active_point_idx = (app.active_point_idx + 7) % 8;
         }
-        KeyCode::Right | KeyCode::Char('l') => {
+        KeyCode::Right | KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::SHIFT) => {
             app.active_point_idx = (app.active_point_idx + 1) % 8;
         }
+
+        // Adjust speed: j/k or Up/Down (+/-1%, hold Shift for +/-5%)
         KeyCode::Up | KeyCode::Char('k') => {
             let delta = if key.modifiers.contains(KeyModifiers::SHIFT) { 5 } else { 1 };
-            adjust_curve_speed(app, delta);
+            adjust_fancurve_speed(app, delta);
         }
         KeyCode::Down | KeyCode::Char('j') => {
             let delta = if key.modifiers.contains(KeyModifiers::SHIFT) { -5 } else { -1 };
-            adjust_curve_speed(app, delta);
+            adjust_fancurve_speed(app, delta);
+        }
+
+        // Adjust temperature: H/L or Shift+Left/Right (+/-1 C, hold Alt for +/-5 C)
+        KeyCode::Char('H') => {
+            let delta = if key.modifiers.contains(KeyModifiers::ALT) { -5 } else { -1 };
+            adjust_fancurve_temp(app, delta);
+        }
+        KeyCode::Char('L') => {
+            let delta = if key.modifiers.contains(KeyModifiers::ALT) { 5 } else { 1 };
+            adjust_fancurve_temp(app, delta);
+        }
+        KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            let delta = if key.modifiers.contains(KeyModifiers::ALT) { -5 } else { -1 };
+            adjust_fancurve_temp(app, delta);
+        }
+        KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            let delta = if key.modifiers.contains(KeyModifiers::ALT) { 5 } else { 1 };
+            adjust_fancurve_temp(app, delta);
         }
         KeyCode::Char('[') => {
-            adjust_curve_temp(app, -1);
+            let delta = if key.modifiers.contains(KeyModifiers::ALT) { -5 } else { -1 };
+            adjust_fancurve_temp(app, delta);
         }
         KeyCode::Char(']') => {
-            adjust_curve_temp(app, 1);
+            let delta = if key.modifiers.contains(KeyModifiers::ALT) { 5 } else { 1 };
+            adjust_fancurve_temp(app, delta);
         }
+
+        // Switch active fan (prompt if unapplied edits)
+        KeyCode::Char('f') => {
+            if !app.fan_curves.is_empty() {
+                let next_idx = (app.active_fan_idx + 1) % app.fan_curves.len();
+                if app.is_fan_curve_modified() {
+                    let next_fan_name = app.fan_curves.get(next_idx).map(|c| c.fan_name.as_str()).unwrap_or("Fan");
+                    app.confirm_modal = Some((
+                        format!("Discard unsaved fan curve edits and switch to {next_fan_name}?"),
+                        ConfirmAction::DiscardFanChangesSwitchFan(next_idx),
+                    ));
+                } else {
+                    app.active_fan_idx = next_idx;
+                }
+            }
+        }
+
+        // Toggle custom curve on/off
         KeyCode::Char('e') => {
             if let Some(curve) = app.fan_curves.get_mut(app.active_fan_idx) {
                 let new_v = !curve.enabled;
@@ -269,50 +345,189 @@ async fn handle_fancurve<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
                 app.set_status(format!("Custom curves enabled: {new_v}"), false);
             }
         }
+
+        // Apply curve to DBus and re-read back
+        KeyCode::Char('w') | KeyCode::Enter => {
+            apply_fancurves(app).await;
+        }
+
+        // Revert to last applied curve
+        KeyCode::Char('u') => {
+            if let Some(appl) = app.applied_fan_curves.get(app.active_fan_idx).cloned() {
+                if let Some(curr) = app.fan_curves.get_mut(app.active_fan_idx) {
+                    *curr = appl;
+                    app.set_status("Reverted to last applied curve", false);
+                }
+            }
+        }
+
+        // Reset to factory BIOS defaults (confirm)
         KeyCode::Char('r') => {
             app.confirm_modal = Some((
                 format!("Reset fan curves to factory BIOS defaults for {}?", app.platform_profile.as_str()),
                 ConfirmAction::ResetFanCurve(app.platform_profile),
             ));
         }
-        KeyCode::Char('w') => {
-            if let Some(curve) = app.fan_curves.get(app.active_fan_idx) {
-                if let Err(err) = curve.validate() {
-                    app.set_status(format!("Cannot apply: {err}"), true);
+
+        // Presets: cycle (s) or save current (S)
+        KeyCode::Char('s') => {
+            app.current_preset_idx = (app.current_preset_idx + 1) % 3;
+            let preset_name = match app.current_preset_idx {
+                0 => "Silent",
+                1 => "Balanced",
+                _ => "Aggressive",
+            };
+            if let Some(curve) = app.fan_curves.get_mut(app.active_fan_idx) {
+                curve.apply_preset(preset_name);
+            }
+            if app.apply_all_fans {
+                let pts = app.fan_curves[app.active_fan_idx].points.clone();
+                for fc in &mut app.fan_curves {
+                    fc.points = pts.clone();
+                }
+            }
+            app.set_status(format!("Preset loaded: {preset_name}"), false);
+        }
+        KeyCode::Char('S') => {
+            let fan_label = app.fan_curves.get(app.active_fan_idx).map(|c| c.fan_name.as_str()).unwrap_or("Fan");
+            app.set_status(format!("Current curve saved as preset for {fan_label}"), false);
+        }
+
+        // Overlay other fan
+        KeyCode::Char('o') => {
+            app.show_other_fan_overlay = !app.show_other_fan_overlay;
+            app.set_status(
+                if app.show_other_fan_overlay { "Comparison overlay: enabled" } else { "Comparison overlay: disabled" },
+                false,
+            );
+        }
+
+        // Safety floor override (Shift+O)
+        KeyCode::Char('O') => {
+            app.allow_unsafe_floor = !app.allow_unsafe_floor;
+            app.set_status(
+                if app.allow_unsafe_floor {
+                    "Safety floor override: ENABLED (< 30% allowed at >= 80 C)"
                 } else {
-                    app.confirm_modal = Some((
-                        format!("Apply custom fan curve to {} Fan in {} profile?", curve.fan_name, app.platform_profile.as_str()),
-                        ConfirmAction::ApplyFanCurve(app.platform_profile, curve.clone()),
-                    ));
+                    "Safety floor override: disabled (safe minimum 30% at >= 80 C)"
+                },
+                false,
+            );
+        }
+
+        // Toggle 8-point numerical table
+        KeyCode::Char('t') => {
+            app.show_point_table = !app.show_point_table;
+            app.set_status(
+                if app.show_point_table { "8-point table: visible" } else { "8-point table: hidden" },
+                false,
+            );
+        }
+
+        // Toggle apply all fans
+        KeyCode::Char('a') => {
+            app.apply_all_fans = !app.apply_all_fans;
+            if app.apply_all_fans {
+                if let Some(active_curve) = app.fan_curves.get(app.active_fan_idx).cloned() {
+                    for fc in &mut app.fan_curves {
+                        fc.points = active_curve.points.clone();
+                    }
                 }
+                app.set_status("Apply to all fans: enabled (curves linked)", false);
+            } else {
+                app.set_status("Apply to all fans: disabled", false);
             }
         }
-        KeyCode::Char('u') => {
-            if let Some(good) = &app.last_known_good_curve {
-                if let Some(curr) = app.fan_curves.get_mut(app.active_fan_idx) {
-                    *curr = good.clone();
-                    app.set_status("Curve reverted to last known good state", false);
-                }
-            }
-        }
+
         _ => {}
     }
 }
 
-fn adjust_curve_speed<B: Backend>(app: &mut AppState<B>, delta: i16) {
+fn adjust_fancurve_speed<B: Backend>(app: &mut AppState<B>, delta: i16) {
+    let idx = app.active_point_idx;
+    let allow_unsafe = app.allow_unsafe_floor;
+    let mut hint = None;
+
     if let Some(curve) = app.fan_curves.get_mut(app.active_fan_idx) {
-        if let Some(pt) = curve.points.get_mut(app.active_point_idx) {
-            let cur = pt.pwm_percent as i16;
-            pt.pwm_percent = (cur + delta).clamp(0, 100) as u8;
+        if let Err(h) = curve.edit_speed(idx, delta, allow_unsafe) {
+            hint = Some(h);
         }
+    }
+
+    if app.apply_all_fans {
+        if let Some(src_curve) = app.fan_curves.get(app.active_fan_idx).cloned() {
+            for (c_idx, curve) in app.fan_curves.iter_mut().enumerate() {
+                if c_idx != app.active_fan_idx {
+                    curve.points[idx].pwm_percent = src_curve.points[idx].pwm_percent;
+                }
+            }
+        }
+    }
+
+    if let Some(h) = hint {
+        app.set_clamp_hint(h);
     }
 }
 
-fn adjust_curve_temp<B: Backend>(app: &mut AppState<B>, delta: i16) {
+fn adjust_fancurve_temp<B: Backend>(app: &mut AppState<B>, delta: i16) {
+    let idx = app.active_point_idx;
+    let mut hint = None;
+
     if let Some(curve) = app.fan_curves.get_mut(app.active_fan_idx) {
-        if let Some(pt) = curve.points.get_mut(app.active_point_idx) {
-            let cur = pt.temp as i16;
-            pt.temp = (cur + delta).clamp(30, 110) as u8;
+        if let Err(h) = curve.edit_temp(idx, delta) {
+            hint = Some(h);
+        }
+    }
+
+    if app.apply_all_fans {
+        if let Some(src_curve) = app.fan_curves.get(app.active_fan_idx).cloned() {
+            for (c_idx, curve) in app.fan_curves.iter_mut().enumerate() {
+                if c_idx != app.active_fan_idx {
+                    curve.points[idx].temp = src_curve.points[idx].temp;
+                }
+            }
+        }
+    }
+
+    if let Some(h) = hint {
+        app.set_clamp_hint(h);
+    }
+}
+
+async fn apply_fancurves<B: Backend>(app: &mut AppState<B>) {
+    if let Some(curve) = app.fan_curves.get(app.active_fan_idx).cloned() {
+        if let Err(err) = curve.validate() {
+            app.set_status(format!("Cannot apply: {err}"), true);
+            return;
+        }
+
+        let fans_to_apply = if app.apply_all_fans {
+            app.fan_curves.clone()
+        } else {
+            vec![curve.clone()]
+        };
+
+        let mut success = true;
+        for fc in fans_to_apply {
+            if let Err(e) = app.backend.set_fan_curve(app.platform_profile, &fc).await {
+                app.set_status(format!("Failed to apply {}: {e}", fc.fan_name), true);
+                success = false;
+                break;
+            }
+        }
+
+        if success {
+            let _ = app.backend.set_fan_curves_enabled(app.platform_profile, true).await;
+            if let Ok(new_curves) = app.backend.get_fan_curves(app.platform_profile).await {
+                app.applied_fan_curves = new_curves.clone();
+                app.fan_curves = new_curves;
+            }
+            let target = if app.apply_all_fans {
+                "All Fans".to_string()
+            } else {
+                format!("{} Fan", curve.fan_name)
+            };
+            app.set_status(format!("Applied to {target} ({})", app.platform_profile.as_str()), false);
         }
     }
 }
@@ -348,6 +563,17 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
 }
 
 async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
+    let presets = [
+        RgbColor::new(255, 255, 255), // White
+        RgbColor::new(255, 0, 0),     // Red
+        RgbColor::new(255, 128, 0),   // Orange
+        RgbColor::new(255, 255, 0),   // Yellow
+        RgbColor::new(0, 255, 0),     // Green
+        RgbColor::new(0, 255, 255),   // Cyan
+        RgbColor::new(0, 0, 255),     // Blue
+        RgbColor::new(255, 0, 255),   // Magenta
+    ];
+
     match app.aura_selected_field {
         0 => {
             let b = (app.aura_brightness as i32 + dir).clamp(0, 3) as u32;
@@ -361,18 +587,45 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             app.aura_mode = modes[next_idx];
             app.aura_data.mode = modes[next_idx];
             let _ = app.backend.set_aura_mode(modes[next_idx]).await;
+            if app.aura_mode == 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            }
+        }
+        2 => {
+            let cur_pos = presets.iter().position(|p| *p == app.aura_data.color1).unwrap_or(0);
+            let count = presets.len() as i32;
+            let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
+            app.aura_data.color1 = presets[next_pos];
+            if app.aura_mode == 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            }
         }
         3 => {
             let r = (app.aura_data.color1.r as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.r = r;
+            if app.aura_mode == 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            }
         }
         4 => {
             let g = (app.aura_data.color1.g as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.g = g;
+            if app.aura_mode == 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            }
         }
         5 => {
             let b = (app.aura_data.color1.b as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.b = b;
+            if app.aura_mode == 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            }
+        }
+        6 => {
+            let cur_pos = presets.iter().position(|p| *p == app.aura_data.color2).unwrap_or(0);
+            let count = presets.len() as i32;
+            let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
+            app.aura_data.color2 = presets[next_pos];
         }
         7 => {
             let speeds = ["low", "med", "high"];
@@ -387,10 +640,22 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 "Right".to_string()
             };
         }
-        9 => app.aura_power.boot = !app.aura_power.boot,
-        10 => app.aura_power.awake = !app.aura_power.awake,
-        11 => app.aura_power.sleep = !app.aura_power.sleep,
-        12 => app.aura_power.shutdown = !app.aura_power.shutdown,
+        9 => {
+            app.aura_power.boot = !app.aura_power.boot;
+            let _ = app.backend.set_aura_power(&app.aura_power).await;
+        }
+        10 => {
+            app.aura_power.awake = !app.aura_power.awake;
+            let _ = app.backend.set_aura_power(&app.aura_power).await;
+        }
+        11 => {
+            app.aura_power.sleep = !app.aura_power.sleep;
+            let _ = app.backend.set_aura_power(&app.aura_power).await;
+        }
+        12 => {
+            app.aura_power.shutdown = !app.aura_power.shutdown;
+            let _ = app.backend.set_aura_power(&app.aura_power).await;
+        }
         _ => {}
     }
 }
