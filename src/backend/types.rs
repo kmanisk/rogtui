@@ -1,5 +1,50 @@
 use serde::{Deserialize, Serialize};
 
+/// Software-driven RGB lighting effects that run on the 1 Hz ticker.
+/// These write static colors to the keyboard via the asusd DBus interface.
+/// They are distinct from hardware/firmware effects (Static, Breathe, etc.)
+/// and only active while brightness > 0 and the effect is selected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SoftwareEffect {
+    None,
+    /// Maps max(CPU temp, GPU temp) to a blue -> yellow -> red gradient.
+    Heatmap,
+    /// Keyboard color reflects the current supergfx GPU operating mode.
+    GpuMode,
+    /// Keyboard color reflects battery charge state and direction.
+    BatteryStatus,
+}
+
+impl SoftwareEffect {
+    pub fn label(self) -> &'static str {
+        match self {
+            SoftwareEffect::None => "None",
+            SoftwareEffect::Heatmap => "Heatmap",
+            SoftwareEffect::GpuMode => "GPU Mode Indicator",
+            SoftwareEffect::BatteryStatus => "Battery Status",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            SoftwareEffect::None => "No software effect active.",
+            SoftwareEffect::Heatmap => {
+                "Maps CPU/GPU temperature to keyboard color.\n\
+                 Blue (cool) -> Yellow (warm) -> Red (hot).\n\
+                 Uses the higher of CPU/GPU readings."
+            }
+            SoftwareEffect::GpuMode => {
+                "Reflects the active supergfx GPU operating mode:\n\
+                 Green = Integrated, Yellow = Hybrid, Orange = AsusMuxDgpu."
+            }
+            SoftwareEffect::BatteryStatus => {
+                "Reflects battery charge state:\n\
+                 Green = charging, Yellow = discharging, Red = low (<20%)."
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlatformProfile {
     Quiet = 2,

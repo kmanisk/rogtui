@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::app::AppState;
 use crate::backend::Backend;
-use crate::backend::types::RgbColor;
+use crate::backend::types::{RgbColor, SoftwareEffect};
 use crate::ui::widgets::panel_block;
 
 pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
@@ -27,14 +27,15 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     };
 
     // -------------------------------------------------------------------------
-    // Left Pane: Structured Controls (Effect, Colours, Power States)
+    // Left Pane: Structured Controls (Effect, Colours, Software Effects, Power)
     // -------------------------------------------------------------------------
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7), // Effect & Brightness
-            Constraint::Length(9), // Colours
-            Constraint::Length(4), // Power States
+            Constraint::Length(6), // Effect & Brightness
+            Constraint::Length(6), // Colours
+            Constraint::Length(5), // Software Effects (1 Hz Live Sync)
+            Constraint::Length(3), // Power States
             Constraint::Min(0),
         ])
         .split(chunks[0]);
@@ -52,10 +53,10 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         _ => "Custom",
     };
     let b_bars = match app.aura_brightness {
-        0 => "━ ━ ━",
-        1 => "█ ━ ━",
-        2 => "█ █ ━",
-        _ => "█ █ █",
+        0 => "░░░",
+        1 => "█░░",
+        2 => "██░",
+        _ => "███",
     };
 
     let mode_str = match app.aura_mode {
@@ -108,7 +109,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     fn mini_bar(val: u8) -> String {
         let filled = (val as usize * 8) / 255;
         let empty = 8 - filled;
-        format!("[{}{}] {:>3}", "█".repeat(filled), "━".repeat(empty), val)
+        format!("[{}{}] {:>3}", "█".repeat(filled), "░".repeat(empty), val)
     }
 
     let mut col_lines = Vec::new();
@@ -168,10 +169,51 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
 
     f.render_widget(Paragraph::new(col_lines), col_inner);
 
-    // 3. Power States Panel
+    // 3. Software Effects Panel (1 Hz Live Sync)
+    let sw_block = panel_block(
+        " Software Effects (1 Hz Live Sync) ",
+        (13..=15).contains(&app.aura_selected_field),
+        theme,
+    );
+    let sw_inner = sw_block.inner(left_chunks[2]);
+    f.render_widget(sw_block, left_chunks[2]);
+
+    let sw_fields = [
+        (13, "Heatmap (CPU/GPU Temp -> Color)", app.active_software_effect == SoftwareEffect::Heatmap),
+        (14, "GPU Mode Indicator", app.active_software_effect == SoftwareEffect::GpuMode),
+        (15, "Battery Status", app.active_software_effect == SoftwareEffect::BatteryStatus),
+    ];
+
+    let mut sw_lines = Vec::new();
+    for (f_idx, label, is_active) in sw_fields {
+        let is_sel = app.aura_selected_field == f_idx;
+        let status_tag = if is_active { "[x] Active" } else { "[ ] Inactive" };
+        let row_str = format!("  {label: <34}: {status_tag}");
+        let w = sw_inner.width as usize;
+        let padded = if row_str.len() < w { format!("{}{}", row_str, " ".repeat(w - row_str.len())) } else { row_str };
+
+        if is_sel && !is_off {
+            sw_lines.push(Line::from(Span::styled(padded, theme.sel_style())));
+        } else if is_off {
+            sw_lines.push(Line::from(Span::styled(padded, Style::default().fg(theme.dim))));
+        } else {
+            let tag_style = if is_active {
+                Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.dim)
+            };
+            sw_lines.push(Line::from(vec![
+                Span::styled(format!("  {label: <34}: "), Style::default().fg(theme.fg)),
+                Span::styled(status_tag, tag_style),
+            ]));
+        }
+    }
+    f.render_widget(Paragraph::new(sw_lines), sw_inner);
+
+    // 4. Power States Panel
     let pwr_block = panel_block(" Hardware Power States ", (9..=12).contains(&app.aura_selected_field), theme);
-    let pwr_inner = pwr_block.inner(left_chunks[2]);
-    f.render_widget(pwr_block, left_chunks[2]);
+    let pwr_inner = pwr_block.inner(left_chunks[3]);
+    f.render_widget(pwr_block, left_chunks[3]);
 
     let states = [
         (9, "Boot", app.aura_power.boot),
@@ -205,15 +247,32 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         let details_inner = details_block.inner(chunks[1]);
         f.render_widget(details_block, chunks[1]);
 
-        let effect_desc = match app.aura_mode {
-            0 => "Static: Displays a continuous solid color across the entire keyboard matrix.",
-            1 => "Breathe: Smooth sinusoidal pulsing transition between Color 1 and Color 2.",
-            2 => "Rainbow Cycle: Continuous spectral progression through the full RGB color wheel.",
-            10 => "Pulse: Rhythmic strobe pulses at the specified animation speed.",
-            _ => "Custom effect.",
+        let (active_title, active_desc) = match app.active_software_effect {
+            SoftwareEffect::Heatmap => (
+                "Software Effect: Heatmap (Live CPU/GPU Temp)",
+                "Maps highest component temperature to smooth RGB gradient:\n  Cool (<30C) -> Blue | Warm (60C) -> Yellow | Hot (>=90C) -> Red.\n  Volatile updates written via DBus at 1 Hz.",
+            ),
+            SoftwareEffect::GpuMode => (
+                "Software Effect: GPU Mode Indicator",
+                "Color reflects active supergfx GPU mode:\n  Integrated -> Green | Hybrid -> Yellow | Direct MUX -> Orange-Red.\n  Syncs automatically whenever GPU mode switches.",
+            ),
+            SoftwareEffect::BatteryStatus => (
+                "Software Effect: Battery Status",
+                "Color reflects battery charge level and state:\n  Charging -> Bright Green | Low (<20%) -> Red | Balanced -> Teal.\n  Monitors live ACPI battery state at 1 Hz.",
+            ),
+            SoftwareEffect::None => (
+                mode_str,
+                match app.aura_mode {
+                    0 => "Static: Displays a continuous solid color across the entire keyboard matrix.",
+                    1 => "Breathe: Smooth sinusoidal pulsing transition between Color 1 and Color 2.",
+                    2 => "Rainbow Cycle: Continuous spectral progression through the full RGB color wheel.",
+                    10 => "Pulse: Rhythmic strobe pulses at the specified animation speed.",
+                    _ => "Custom effect.",
+                },
+            ),
         };
 
-        let right_lines = vec![
+        let mut right_lines = vec![
             Line::from(Span::styled(
                 "  Hardware Architecture",
                 Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
@@ -235,8 +294,20 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             ]),
             Line::from(""),
             Line::from(Span::styled("  Active Effect", Style::default().fg(theme.dim))),
-            Line::from(Span::styled(format!("  {mode_str}"), Style::default().fg(theme.warn).add_modifier(Modifier::BOLD))),
-            Line::from(Span::styled(format!("  {effect_desc}"), Style::default().fg(theme.fg))),
+            Line::from(Span::styled(format!("  {active_title}"), Style::default().fg(theme.warn).add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(format!("  {active_desc}"), Style::default().fg(theme.fg))),
+        ];
+
+        if let Some(col) = app.last_effect_color {
+            right_lines.push(Line::from(""));
+            right_lines.push(Line::from(vec![
+                Span::styled("  Live Effect Color: ", Style::default().fg(theme.dim)),
+                Span::styled(format!("{} ", col.to_hex()), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+                Span::styled("████████", Style::default().fg(Color::Rgb(col.r, col.g, col.b))),
+            ]));
+        }
+
+        right_lines.extend(vec![
             Line::from(""),
             Line::from(Span::styled("  Power States Policy", Style::default().fg(theme.dim))),
             Line::from(Span::styled(
@@ -245,10 +316,10 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "  Press 'w' to save lighting and power configuration to firmware.",
+                "  Press 'w' to save current settings to hardware firmware / BIOS.",
                 Style::default().fg(theme.dim),
             )),
-        ];
+        ]);
 
         f.render_widget(Paragraph::new(right_lines), details_inner);
     }
@@ -317,9 +388,11 @@ fn render_color_picker_modal<B: Backend>(f: &mut Frame, app: &AppState<B>, area:
     // 4. Sliders (HSV and RGB)
     let slider_width = 24;
     let make_slider_bar = |val: f32, max: f32| -> String {
-        let filled = ((val / max) * slider_width as f32).round().clamp(0.0, slider_width as f32) as usize;
-        let empty = slider_width - filled;
-        format!("[{}{}]", "█".repeat(filled), "━".repeat(empty))
+        let frac = (val / max).clamp(0.0, 1.0);
+        let filled = (frac * slider_width as f32).round() as usize;
+        let filled = filled.min(slider_width);
+        let empty = slider_width.saturating_sub(filled);
+        format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
     };
 
     let sliders: [(usize, &str, String, String); 6] = [

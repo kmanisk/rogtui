@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::app::{ActiveTab, AppState, ConfirmAction};
-use crate::backend::types::{PlatformProfile, RgbColor};
+use crate::backend::types::{PlatformProfile, RgbColor, SoftwareEffect};
 use crate::backend::Backend;
 
 pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
@@ -40,6 +40,24 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                                 app.set_status(format!("Fan curve applied to {} successfully", profile.as_str()), false);
                             }
                             Err(e) => app.set_status(format!("Failed to apply curve: {e}"), true),
+                        }
+                    }
+                    ConfirmAction::ApplyAllFanCurves(profile, curves) => {
+                        let mut success = true;
+                        for fc in &curves {
+                            if let Err(e) = app.backend.set_fan_curve(profile, fc).await {
+                                app.set_status(format!("Failed to apply {}: {e}", fc.fan_name), true);
+                                success = false;
+                                break;
+                            }
+                        }
+                        if success {
+                            let _ = app.backend.set_fan_curves_enabled(profile, true).await;
+                            if let Ok(new_curves) = app.backend.get_fan_curves(profile).await {
+                                app.applied_fan_curves = new_curves.clone();
+                                app.fan_curves = new_curves;
+                            }
+                            app.set_status(format!("Fan curves applied to hardware for {}", profile.as_str()), false);
                         }
                     }
                     ConfirmAction::ResetFanCurve(profile) => {
@@ -88,6 +106,30 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                                 app.set_status(format!("{display_name} updated successfully"), false);
                             }
                             Err(e) => app.set_status(format!("Failed to set {display_name}: {e}"), true),
+                        }
+                    }
+                    ConfirmAction::RestoreArmouryDefault { node_name, display_name } => {
+                        match app.backend.restore_armoury_default(&node_name).await {
+                            Ok(()) => {
+                                if let Ok(attrs) = app.backend.get_armoury_attributes().await {
+                                    app.armoury_attributes = attrs;
+                                }
+                                app.set_status(format!("Default restored for {display_name}"), false);
+                            }
+                            Err(e) => app.set_status(format!("Failed to restore default for {display_name}: {e}"), true),
+                        }
+                    }
+                    ConfirmAction::SaveAuraFirmware => {
+                        if app.aura_brightness == 0 {
+                            let _ = app.backend.set_aura_brightness(0).await;
+                            let _ = app.backend.set_aura_power(&app.aura_power).await;
+                            app.set_status("Backlight is Off (power states saved to firmware)", false);
+                        } else if let Err(e) = app.backend.set_aura_mode_data(&app.aura_data).await {
+                            app.set_status(format!("Error saving aura: {e}"), true);
+                        } else {
+                            let _ = app.backend.set_aura_brightness(app.aura_brightness).await;
+                            let _ = app.backend.set_aura_power(&app.aura_power).await;
+                            app.set_status("Aura lighting and power state saved to firmware / BIOS", false);
                         }
                     }
                 }
@@ -263,6 +305,9 @@ async fn handle_dashboard<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
                     false,
                 );
             }
+        }
+        KeyCode::Char('l') | KeyCode::Char('L') => {
+            app.toggle_metrics_logging();
         }
         _ => {}
     }
@@ -651,28 +696,16 @@ async fn apply_fancurves<B: Backend>(app: &mut AppState<B>) {
             vec![curve.clone()]
         };
 
-        let mut success = true;
-        for fc in fans_to_apply {
-            if let Err(e) = app.backend.set_fan_curve(app.platform_profile, &fc).await {
-                app.set_status(format!("Failed to apply {}: {e}", fc.fan_name), true);
-                success = false;
-                break;
-            }
-        }
+        let target = if app.apply_all_fans {
+            "All Fans".to_string()
+        } else {
+            format!("{} Fan", curve.fan_name)
+        };
 
-        if success {
-            let _ = app.backend.set_fan_curves_enabled(app.platform_profile, true).await;
-            if let Ok(new_curves) = app.backend.get_fan_curves(app.platform_profile).await {
-                app.applied_fan_curves = new_curves.clone();
-                app.fan_curves = new_curves;
-            }
-            let target = if app.apply_all_fans {
-                "All Fans".to_string()
-            } else {
-                format!("{} Fan", curve.fan_name)
-            };
-            app.set_status(format!("Applied to {target} ({})", app.platform_profile.as_str()), false);
-        }
+        app.confirm_modal = Some((
+            format!("Apply custom fan curve ({target}) to hardware EC for {}?", app.platform_profile.as_str()),
+            ConfirmAction::ApplyAllFanCurves(app.platform_profile, fans_to_apply),
+        ));
     }
 }
 
@@ -680,7 +713,7 @@ fn next_aura_field(current: usize, dir: i32, brightness: u32) -> usize {
     let accessible: &[usize] = if brightness == 0 {
         &[0, 9, 10, 11, 12]
     } else {
-        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     };
 
     let cur_pos = accessible.iter().position(|&f| f == current).unwrap_or(0);
@@ -727,19 +760,10 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             adjust_aura_field(app, 1).await;
         }
         KeyCode::Char('w') => {
-            if app.aura_brightness == 0 {
-                let _ = app.backend.set_aura_brightness(0).await;
-                let _ = app.backend.set_aura_power(&app.aura_power).await;
-                app.set_status("Backlight is Off (power states saved)", false);
-                return;
-            }
-            if let Err(e) = app.backend.set_aura_mode_data(&app.aura_data).await {
-                app.set_status(format!("Error applying aura: {e}"), true);
-            } else {
-                let _ = app.backend.set_aura_brightness(app.aura_brightness).await;
-                let _ = app.backend.set_aura_power(&app.aura_power).await;
-                app.set_status("Aura lighting and power state applied to hardware", false);
-            }
+            app.confirm_modal = Some((
+                "Save Aura lighting and power configuration to hardware firmware / BIOS?".to_string(),
+                ConfirmAction::SaveAuraFirmware,
+            ));
         }
         _ => {}
     }
@@ -768,8 +792,13 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let b = (app.aura_brightness as i32 + dir).clamp(0, 3) as u32;
             app.aura_brightness = b;
             let _ = app.backend.set_aura_brightness(b).await;
-            if b == 0 && (1..=8).contains(&app.aura_selected_field) {
-                app.aura_selected_field = 0;
+            if b == 0 {
+                // Brightness off: move focus back to brightness row and stop any software effect
+                if (1..=15).contains(&app.aura_selected_field) {
+                    app.aura_selected_field = 0;
+                }
+                app.active_software_effect = SoftwareEffect::None;
+                app.last_effect_color = None;
             }
         }
         1 => {
@@ -782,6 +811,9 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             if app.aura_mode == 0 {
                 let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
             }
+            // Selecting a firmware mode deactivates any software effect
+            app.active_software_effect = SoftwareEffect::None;
+            app.last_effect_color = None;
         }
         2 => {
             let cur_pos = presets.iter().position(|p| *p == app.aura_data.color1).unwrap_or(0);
@@ -847,6 +879,42 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         12 => {
             app.aura_power.shutdown = !app.aura_power.shutdown;
             let _ = app.backend.set_aura_power(&app.aura_power).await;
+        }
+        // Software effect fields: toggle on/off.
+        // Selecting a new effect deactivates the previous one and resets the cache
+        // so the next ticker tick writes immediately.
+        13 => {
+            if app.active_software_effect == SoftwareEffect::Heatmap {
+                app.active_software_effect = SoftwareEffect::None;
+                app.last_effect_color = None;
+                app.set_status("Heatmap effect deactivated", false);
+            } else {
+                app.active_software_effect = SoftwareEffect::Heatmap;
+                app.last_effect_color = None;
+                app.set_status("Heatmap effect active (CPU/GPU temp -> keyboard color)", false);
+            }
+        }
+        14 => {
+            if app.active_software_effect == SoftwareEffect::GpuMode {
+                app.active_software_effect = SoftwareEffect::None;
+                app.last_effect_color = None;
+                app.set_status("GPU Mode Indicator deactivated", false);
+            } else {
+                app.active_software_effect = SoftwareEffect::GpuMode;
+                app.last_effect_color = None;
+                app.set_status("GPU Mode Indicator active (GPU mode -> keyboard color)", false);
+            }
+        }
+        15 => {
+            if app.active_software_effect == SoftwareEffect::BatteryStatus {
+                app.active_software_effect = SoftwareEffect::None;
+                app.last_effect_color = None;
+                app.set_status("Battery Status effect deactivated", false);
+            } else {
+                app.active_software_effect = SoftwareEffect::BatteryStatus;
+                app.last_effect_color = None;
+                app.set_status("Battery Status effect active (charge state -> keyboard color)", false);
+            }
         }
         _ => {}
     }
@@ -978,13 +1046,13 @@ async fn handle_armoury<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
         KeyCode::Char('r') => {
             if let Some(attr) = app.armoury_attributes.get(app.armoury_selected_idx).cloned() {
                 if attr.is_available {
-                    let node = attr.node_name.clone();
-                    if app.backend.restore_armoury_default(&node).await.is_ok() {
-                        if let Some(a) = app.armoury_attributes.get_mut(app.armoury_selected_idx) {
-                            a.current_value = a.default_value;
-                        }
-                        app.set_status(format!("Default restored for {}", attr.display_name), false);
-                    }
+                    app.confirm_modal = Some((
+                        format!("Restore factory BIOS default for {}?", attr.display_name),
+                        ConfirmAction::RestoreArmouryDefault {
+                            node_name: attr.node_name,
+                            display_name: attr.display_name,
+                        },
+                    ));
                 }
             }
         }
@@ -1022,17 +1090,35 @@ async fn adjust_armoury_attr<B: Backend>(app: &mut AppState<B>, dir: i32) {
             return;
         }
 
-        // Reboot confirmation modal for hardware switches
-        if node == "gpu_mux_mode" || node == "dgpu_disable" {
-            let label = if node == "gpu_mux_mode" {
-                if new_val == 0 { "dGPU Direct (MUX)" } else { "Optimus / Hybrid" }
-            } else if new_val == 1 {
-                "Disabled (dGPU off)"
+        // Extra confirmation modal for hardware-sensitive switches and power limits
+        let is_sensitive = matches!(
+            node.as_str(),
+            "gpu_mux_mode"
+                | "dgpu_disable"
+                | "ppt_pl1_spl"
+                | "ppt_pl2_sppt"
+                | "nv_base_tgp"
+                | "nv_tgp"
+                | "nv_temp_target"
+                | "charge_mode"
+        );
+
+        if is_sensitive {
+            let msg = if node == "gpu_mux_mode" || node == "dgpu_disable" {
+                let label = if node == "gpu_mux_mode" {
+                    if new_val == 0 { "dGPU Direct (MUX)" } else { "Optimus / Hybrid" }
+                } else if new_val == 1 {
+                    "Disabled (dGPU off)"
+                } else {
+                    "Enabled (dGPU on)"
+                };
+                format!("Switch {} to {}? This hardware change requires a reboot.", attr.display_name, label)
             } else {
-                "Enabled (dGPU on)"
+                format!("Apply hardware setting for {}: {} -> {}?", attr.display_name, attr.current_value, new_val)
             };
+
             app.confirm_modal = Some((
-                format!("Switch {} to {}? This hardware change requires a reboot.", attr.display_name, label),
+                msg,
                 ConfirmAction::ApplyArmouryAttr {
                     node_name: node,
                     value: new_val,

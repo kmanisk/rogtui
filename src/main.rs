@@ -1,4 +1,5 @@
 use rogtui::{app, backend, handler, ui};
+use rogtui::backend::types::SoftwareEffect;
 
 use std::env;
 use std::io::{self, stdout};
@@ -127,10 +128,17 @@ async fn app_loop<B: backend::Backend>(
             _ = ticker.tick() => {
                 let had_expired = app.clear_expired_messages();
                 let is_telemetry_tab = matches!(app.current_tab, ActiveTab::Dashboard | ActiveTab::FanCurves);
-                if is_telemetry_tab {
+                let needs_sensors = is_telemetry_tab
+                    || app.active_software_effect != SoftwareEffect::None
+                    || app.is_logging_metrics;
+                if needs_sensors {
                     app.refresh_sensors().await;
                 }
-                if is_telemetry_tab || had_expired {
+                app.apply_software_effect().await;
+                if app.is_logging_metrics {
+                    app.log_metrics_sample();
+                }
+                if needs_sensors || had_expired {
                     terminal.draw(|f| ui::render_ui(f, &app))?;
                 }
             }

@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::backend::types::{
     ArmouryAttribute, AuraModeData, AuraPowerState, FanCurve, GpuMode, GpuPowerState,
-    PendingUserAction, PlatformProfile, RgbColor, SensorData,
+    PendingUserAction, PlatformProfile, RgbColor, SensorData, SoftwareEffect,
 };
 use crate::backend::Backend;
 use crate::ui::theme::Theme;
@@ -73,10 +73,13 @@ impl ActiveTab {
 pub enum ConfirmAction {
     SwitchGpu(GpuMode),
     ApplyFanCurve(PlatformProfile, FanCurve),
+    ApplyAllFanCurves(PlatformProfile, Vec<FanCurve>),
     ResetFanCurve(PlatformProfile),
     DiscardFanChangesSwitchFan(usize),
     DiscardFanChangesSwitchProfile(PlatformProfile),
     ApplyArmouryAttr { node_name: String, value: i32, display_name: String },
+    RestoreArmouryDefault { node_name: String, display_name: String },
+    SaveAuraFirmware,
 }
 
 pub struct AppState<B: Backend> {
@@ -138,6 +141,11 @@ pub struct AppState<B: Backend> {
     pub picker_val: f32,
     pub picker_initial_color: RgbColor,
 
+    // Software RGB Effects (1 Hz ticker-driven, volatile writes via asusd)
+    pub active_software_effect: SoftwareEffect,
+    /// Last color written to hardware; prevents redundant DBus writes when color unchanged.
+    pub last_effect_color: Option<RgbColor>,
+
     // Armoury Attributes State
     pub armoury_attributes: Vec<ArmouryAttribute>,
     pub armoury_selected_idx: usize,
@@ -150,6 +158,11 @@ pub struct AppState<B: Backend> {
 
     // Power Tab field index
     pub power_selected_field: usize,
+
+    // Metrics Logging State (Page 1 toggleable telemetry recorder)
+    pub is_logging_metrics: bool,
+    pub metrics_log_path: std::path::PathBuf,
+    pub metrics_logged_count: usize,
 }
 
 impl<B: Backend> AppState<B> {
@@ -256,6 +269,8 @@ impl<B: Backend> AppState<B> {
             picker_sat: 100.0,
             picker_val: 100.0,
             picker_initial_color: RgbColor::new(0, 200, 255),
+            active_software_effect: SoftwareEffect::None,
+            last_effect_color: None,
             armoury_attributes,
             armoury_selected_idx: 0,
             show_unavailable_armoury: false,
@@ -263,6 +278,13 @@ impl<B: Backend> AppState<B> {
             cpu_temp_history,
             gpu_temp_history,
             power_selected_field: 0,
+            is_logging_metrics: false,
+            metrics_log_path: if let Ok(home) = std::env::var("HOME") {
+                std::path::PathBuf::from(home).join(".local/share/rogtui/metrics.csv")
+            } else {
+                std::path::PathBuf::from("/tmp/rogtui-metrics.csv")
+            },
+            metrics_logged_count: 0,
         })
     }
 
@@ -381,6 +403,188 @@ impl<B: Backend> AppState<B> {
         }
         if let Ok(pm) = self.backend.get_gpu_pending_mode().await {
             self.gpu_pending_mode = pm;
+        }
+    }
+
+    /// Compute the heatmap color from the higher of CPU/GPU temperatures.
+    /// Gradient waypoints: 30C=blue, 60C=yellow, 80C=orange, 90C+=red.
+    pub fn compute_heatmap_color(cpu_temp: Option<u32>, gpu_temp: Option<u32>) -> RgbColor {
+        let temp = match (cpu_temp, gpu_temp) {
+            (Some(c), Some(g)) => c.max(g),
+            (Some(c), None) => c,
+            (None, Some(g)) => g,
+            (None, None) => return RgbColor::new(0, 0, 128), // no data: dim blue
+        };
+
+        struct HeatmapSegment {
+            t_lo: u32,
+            t_hi: u32,
+            c_lo: (u8, u8, u8),
+            c_hi: (u8, u8, u8),
+        }
+
+        let segments = [
+            HeatmapSegment { t_lo: 0,  t_hi: 30,  c_lo: (0, 0, 128),   c_hi: (0, 0, 255) },   // cool: dark -> blue
+            HeatmapSegment { t_lo: 30, t_hi: 60,  c_lo: (0, 0, 255),   c_hi: (255, 255, 0) }, // blue -> yellow
+            HeatmapSegment { t_lo: 60, t_hi: 80,  c_lo: (255, 255, 0), c_hi: (255, 128, 0) }, // yellow -> orange
+            HeatmapSegment { t_lo: 80, t_hi: 90,  c_lo: (255, 128, 0), c_hi: (255, 0, 0) },   // orange -> red
+            HeatmapSegment { t_lo: 90, t_hi: 120, c_lo: (255, 0, 0),   c_hi: (255, 0, 0) },   // red (max)
+        ];
+
+        for s in &segments {
+            if temp <= s.t_hi || s.t_hi == 120 {
+                let t = temp.clamp(s.t_lo, s.t_hi);
+                let span = (s.t_hi - s.t_lo) as f32;
+                let frac = if span > 0.0 { (t - s.t_lo) as f32 / span } else { 0.0 };
+                let lerp = |a: u8, b: u8| -> u8 {
+                    (a as f32 + (b as f32 - a as f32) * frac).round() as u8
+                };
+                return RgbColor::new(
+                    lerp(s.c_lo.0, s.c_hi.0),
+                    lerp(s.c_lo.1, s.c_hi.1),
+                    lerp(s.c_lo.2, s.c_hi.2),
+                );
+            }
+        }
+        RgbColor::new(255, 0, 0)
+    }
+
+    /// Map the supergfx GPU mode to a keyboard color.
+    pub fn compute_gpu_mode_color(mode: GpuMode) -> RgbColor {
+        match mode {
+            GpuMode::Integrated => RgbColor::new(0, 200, 0),       // green: iGPU only, power-saver
+            GpuMode::Hybrid     => RgbColor::new(200, 200, 0),     // yellow: PRIME offload ready
+            GpuMode::AsusMuxDgpu => RgbColor::new(255, 80, 0),     // orange-red: direct MUX dGPU
+            _                   => RgbColor::new(80, 80, 80),      // dim white: unknown
+        }
+    }
+
+    /// Map battery charge percentage and status string to a keyboard color.
+    pub fn compute_battery_color(pct: Option<u8>, status: &str) -> RgbColor {
+        let charging = status.eq_ignore_ascii_case("charging")
+            || status.eq_ignore_ascii_case("full");
+        match pct {
+            Some(_) if charging     => RgbColor::new(0, 220, 0),        // green: charging
+            Some(p) if p < 20       => RgbColor::new(220, 0, 0),        // red: critically low
+            Some(p) if p < 50       => RgbColor::new(220, 120, 0),      // orange: low
+            Some(_)                 => RgbColor::new(0, 180, 120),      // teal-green: comfortable
+            None                    => RgbColor::new(60, 60, 60),        // dim: no data
+        }
+    }
+
+    /// Apply the active software effect to the keyboard via asusd DBus.
+    /// No-op if brightness is Off (0) or effect is None.
+    /// Only writes to hardware when the computed color changes.
+    pub async fn apply_software_effect(&mut self) {
+        if self.aura_brightness == 0 || self.active_software_effect == SoftwareEffect::None {
+            return;
+        }
+
+        let color = match self.active_software_effect {
+            SoftwareEffect::Heatmap => {
+                Self::compute_heatmap_color(self.sensors.cpu_temp_c, self.sensors.gpu_temp_c)
+            }
+            SoftwareEffect::GpuMode => {
+                Self::compute_gpu_mode_color(self.gpu_mode)
+            }
+            SoftwareEffect::BatteryStatus => {
+                Self::compute_battery_color(
+                    self.sensors.battery_charge_percent,
+                    &self.sensors.battery_status.clone(),
+                )
+            }
+            SoftwareEffect::None => return,
+        };
+
+        // Deduplicate: skip DBus write if color has not changed
+        if self.last_effect_color == Some(color) {
+            return;
+        }
+        self.last_effect_color = Some(color);
+
+        // Ensure Static mode (0) is the active firmware mode so the color shows
+        if self.aura_mode != 0 {
+            let _ = self.backend.set_aura_mode(0).await;
+            self.aura_mode = 0;
+            self.aura_data.mode = 0;
+        }
+
+        self.aura_data.color1 = color;
+        let _ = self.backend.set_aura_mode_data(&self.aura_data).await;
+    }
+
+    /// Toggle metrics logging to CSV file on/off.
+    pub fn toggle_metrics_logging(&mut self) {
+        if self.is_logging_metrics {
+            self.is_logging_metrics = false;
+            let count = self.metrics_logged_count;
+            self.set_status(format!("Metrics logging stopped ({count} records written to {})", self.metrics_log_path.display()), false);
+        } else {
+            self.is_logging_metrics = true;
+            self.metrics_logged_count = 0;
+            if let Some(parent) = self.metrics_log_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let needs_header = !self.metrics_log_path.exists()
+                || std::fs::metadata(&self.metrics_log_path).map(|m| m.len() == 0).unwrap_or(true);
+            if needs_header {
+                let header = "timestamp,cpu_model,cpu_temp_c,gpu_temp_c,cpu_usage_pct,cpu_freq_mhz,cpu_fan_rpm,gpu_fan_rpm,ram_used_mb,ram_total_mb,dgpu_status,dgpu_power_state,battery_pct,battery_w,battery_status\n";
+                let _ = std::fs::write(&self.metrics_log_path, header);
+            }
+            let path_str = self.metrics_log_path.display().to_string();
+            self.set_status(format!("Metrics logging started -> {path_str}"), false);
+        }
+    }
+
+    /// Record one row of telemetry metrics to the CSV file.
+    pub fn log_metrics_sample(&mut self) {
+        if !self.is_logging_metrics {
+            return;
+        }
+        use std::io::Write;
+        let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.metrics_log_path)
+        else {
+            return;
+        };
+
+        // Format ISO-style timestamp using libc
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        let now_t = unsafe { libc::time(std::ptr::null_mut()) };
+        unsafe { libc::localtime_r(&now_t, &mut tm) };
+        let timestamp = format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            tm.tm_year + 1900,
+            tm.tm_mon + 1,
+            tm.tm_mday,
+            tm.tm_hour,
+            tm.tm_min,
+            tm.tm_sec
+        );
+
+        let cpu_model_clean = self.sensors.cpu_model.replace(',', " ");
+        let cpu_temp = self.sensors.cpu_temp_c.map(|t| t.to_string()).unwrap_or_default();
+        let gpu_temp = self.sensors.gpu_temp_c.map(|t| t.to_string()).unwrap_or_default();
+        let cpu_usage = self.sensors.cpu_usage_percent.map(|u| u.to_string()).unwrap_or_default();
+        let cpu_freq = self.sensors.cpu_freq_mhz.map(|f| f.to_string()).unwrap_or_default();
+        let cpu_fan = self.sensors.cpu_fan_rpm.map(|r| r.to_string()).unwrap_or_default();
+        let gpu_fan = self.sensors.gpu_fan_rpm.map(|r| r.to_string()).unwrap_or_default();
+        let ram_used = self.sensors.ram_used_mb.map(|m| m.to_string()).unwrap_or_default();
+        let ram_total = self.sensors.ram_total_mb.map(|m| m.to_string()).unwrap_or_default();
+        let dgpu_status = self.sensors.dgpu_status.replace(',', " ");
+        let dgpu_power = self.sensors.dgpu_power_state.replace(',', " ");
+        let bat_pct = self.sensors.battery_charge_percent.map(|b| b.to_string()).unwrap_or_default();
+        let bat_w = self.sensors.battery_power_w.map(|w| format!("{w:.2}")).unwrap_or_default();
+        let bat_status = self.sensors.battery_status.replace(',', " ");
+
+        let line = format!(
+            "{timestamp},{cpu_model_clean},{cpu_temp},{gpu_temp},{cpu_usage},{cpu_freq},{cpu_fan},{gpu_fan},{ram_used},{ram_total},{dgpu_status},{dgpu_power},{bat_pct},{bat_w},{bat_status}\n"
+        );
+
+        if file.write_all(line.as_bytes()).is_ok() {
+            self.metrics_logged_count += 1;
         }
     }
 }

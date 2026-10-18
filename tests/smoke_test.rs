@@ -336,3 +336,106 @@ async fn test_modal_rendering_stability() {
         app.show_color_picker_modal = false;
     }
 }
+
+#[tokio::test]
+async fn test_software_effects_and_color_logic() {
+    use rogtui::backend::types::{RgbColor, SoftwareEffect};
+
+    // 1. Heatmap colors
+    let cool = AppState::<MockBackend>::compute_heatmap_color(Some(30), Some(20));
+    assert_eq!(cool.r, 0);
+    assert_eq!(cool.b, 255);
+
+    let hot = AppState::<MockBackend>::compute_heatmap_color(Some(95), Some(60));
+    assert_eq!(hot.r, 255);
+    assert_eq!(hot.g, 0);
+    assert_eq!(hot.b, 0);
+
+    // 2. GPU Mode colors
+    let igpu = AppState::<MockBackend>::compute_gpu_mode_color(GpuMode::Integrated);
+    assert_eq!(igpu, RgbColor::new(0, 200, 0));
+    let dgpu = AppState::<MockBackend>::compute_gpu_mode_color(GpuMode::AsusMuxDgpu);
+    assert_eq!(dgpu, RgbColor::new(255, 80, 0));
+
+    // 3. Battery colors
+    let charging = AppState::<MockBackend>::compute_battery_color(Some(40), "Charging");
+    assert_eq!(charging, RgbColor::new(0, 220, 0));
+    let low = AppState::<MockBackend>::compute_battery_color(Some(10), "Discharging");
+    assert_eq!(low, RgbColor::new(220, 0, 0));
+
+    // 4. App state effect apply & deduplication
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.aura_brightness = 2;
+    app.active_software_effect = SoftwareEffect::Heatmap;
+    app.sensors.cpu_temp_c = Some(50);
+    app.sensors.gpu_temp_c = Some(45);
+
+    app.apply_software_effect().await;
+    let col1 = app.last_effect_color;
+    assert!(col1.is_some(), "Effect color must be computed and cached");
+
+    // Re-apply without temp change -> cached, deduplicated
+    app.apply_software_effect().await;
+    assert_eq!(app.last_effect_color, col1);
+
+    // Brightness 0 guardrail -> no-op
+    app.aura_brightness = 0;
+    app.last_effect_color = None;
+    app.apply_software_effect().await;
+    assert!(app.last_effect_color.is_none(), "When brightness is 0, software effects must be silenced");
+}
+
+#[tokio::test]
+async fn test_metrics_logging_lifecycle() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+
+    let temp_log = std::env::temp_dir().join(format!("rogtui_test_metrics_{}.csv", std::process::id()));
+    app.metrics_log_path = temp_log.clone();
+
+    assert!(!app.is_logging_metrics);
+    app.toggle_metrics_logging();
+    assert!(app.is_logging_metrics);
+    assert!(temp_log.exists(), "CSV log file must be created on start");
+
+    // Log sample
+    app.sensors.cpu_temp_c = Some(58);
+    app.sensors.gpu_temp_c = Some(48);
+    app.log_metrics_sample();
+    assert_eq!(app.metrics_logged_count, 1);
+
+    // Toggle off
+    app.toggle_metrics_logging();
+    assert!(!app.is_logging_metrics);
+
+    // Clean up temporary file
+    let _ = std::fs::remove_file(temp_log);
+}
+
+#[tokio::test]
+async fn test_hardware_sensitive_confirmations() {
+    use crossterm::event::{KeyCode, KeyEvent};
+
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+
+    // 1. Aura 'w' requires confirmation modal
+    app.current_tab = ActiveTab::Aura;
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('w'))).await;
+    assert!(app.confirm_modal.is_some(), "Saving Aura to hardware must show confirmation modal");
+
+    // Cancel modal
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('n'))).await;
+    assert!(app.confirm_modal.is_none(), "Modal must dismiss on 'n'");
+
+    // 2. Fan Curves 'w' requires confirmation modal
+    app.current_tab = ActiveTab::FanCurves;
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('w'))).await;
+    assert!(app.confirm_modal.is_some(), "Applying fan curve to EC must show confirmation modal");
+
+    // Confirm modal
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('y'))).await;
+    assert!(app.confirm_modal.is_none(), "Modal must dismiss after confirming with 'y'");
+}
+

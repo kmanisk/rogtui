@@ -34,7 +34,7 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let bat_gauge_width = (settings_inner.width.saturating_sub(42) as usize).clamp(8, 16);
     let bat_filled = (app.charge_limit as usize * bat_gauge_width) / 100;
     let bat_empty = bat_gauge_width.saturating_sub(bat_filled);
-    let bat_gauge_str = format!("{}% [ {}{} ]", app.charge_limit, "█".repeat(bat_filled), "━".repeat(bat_empty));
+    let bat_gauge_str = format!("{}% [{}{}]", app.charge_limit, "█".repeat(bat_filled), "░".repeat(bat_empty));
 
     let fields = [
         // 0: Profiles group

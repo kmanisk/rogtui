@@ -210,12 +210,6 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
     let sys_inner = sys_block.inner(chunks[1]);
     f.render_widget(sys_block, chunks[1]);
 
-    let profile_pct = match app.platform_profile {
-        crate::backend::types::PlatformProfile::Quiet => 33,
-        crate::backend::types::PlatformProfile::Balanced => 66,
-        crate::backend::types::PlatformProfile::Performance => 100,
-        crate::backend::types::PlatformProfile::Custom => 50,
-    };
     let prof_color = theme.profile_color(app.platform_profile);
 
     let bat_pct = app.sensors.battery_charge_percent.unwrap_or(0);
@@ -245,14 +239,26 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
     let auto_bright_active = app.sensors.screen_auto_brightness.unwrap_or(false);
 
     let sys_lines = vec![
-        render_gauge(
-            "Platform Profile",
-            app.platform_profile.as_str(),
-            profile_pct,
-            bar_width,
-            prof_color,
-            theme,
-        ),
+        Line::from(vec![
+            Span::styled("  Platform Profile  : ", Style::default().fg(theme.dim)),
+            Span::styled(
+                format!(" < {} > ", app.platform_profile.as_str()),
+                Style::default().bg(prof_color).fg(theme.sel_fg).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   "),
+            Span::styled("[p: cycle]", Style::default().fg(theme.dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Telemetry Log [l] : ", Style::default().fg(theme.dim)),
+            if app.is_logging_metrics {
+                Span::styled(
+                    format!("[● RECORDING ({} samples)]", app.metrics_logged_count),
+                    Style::default().fg(theme.err).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled("[ Inactive ]  (Press 'l' to record to CSV)", Style::default().fg(theme.dim))
+            },
+        ]),
         Line::from(vec![
             Span::styled("  Advanced Tuning : ", Style::default().fg(theme.dim)),
             Span::styled("[Press 'a' for Power Limits Modal]", Style::default().fg(theme.accent)),

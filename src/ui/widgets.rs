@@ -23,7 +23,7 @@ pub fn panel_block<'a>(title: impl Into<Span<'a>>, focused: bool, theme: &Theme)
         .padding(Padding::horizontal(1))
 }
 
-pub fn render_header<B: Backend>(f: &mut Frame, area: Rect, _app: &AppState<B>, theme: &Theme) {
+pub fn render_header<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
     let mut left_spans = vec![
         Span::styled(
             " ROGTUI ",
@@ -32,26 +32,14 @@ pub fn render_header<B: Backend>(f: &mut Frame, area: Rect, _app: &AppState<B>, 
                 .fg(theme.sel_fg)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" "),
-        Span::styled("ASUS TUF Gaming F16", Style::default().fg(theme.dim)),
     ];
 
-    let right_spans = vec![
-        Span::styled("• ", Style::default().fg(theme.ok)),
-        Span::styled("asusd ok", Style::default().fg(theme.dim)),
-        Span::raw("   "),
-        Span::styled("• ", Style::default().fg(theme.ok)),
-        Span::styled("supergfxd ok", Style::default().fg(theme.dim)),
-    ];
-
-    let left_len: usize = left_spans.iter().map(|s| s.content.len()).sum();
-    let right_len: usize = right_spans.iter().map(|s| s.content.len()).sum();
-    let total_width = area.width as usize;
-
-    if total_width > left_len + right_len + 1 {
-        let padding = total_width - left_len - right_len;
-        left_spans.push(Span::raw(" ".repeat(padding)));
-        left_spans.extend(right_spans);
+    if app.is_logging_metrics {
+        left_spans.push(Span::raw(" "));
+        left_spans.push(Span::styled(
+            format!("[● REC: {} samples]", app.metrics_logged_count),
+            Style::default().fg(theme.err).add_modifier(Modifier::BOLD),
+        ));
     }
 
     f.render_widget(Paragraph::new(Line::from(left_spans)), area);
@@ -103,8 +91,9 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
         match app.current_tab {
             ActiveTab::Dashboard => vec![
                 ("tab", "switch"),
-                ("p", "cycle profile"),
-                ("a", "power limits"),
+                ("p", "profile"),
+                ("l", if app.is_logging_metrics { "stop log" } else { "log metrics" }),
+                ("a", "limits"),
                 ("o", "overdrive"),
                 ("b", "auto-bright"),
                 ("?", "help"),
@@ -133,7 +122,7 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
                     vec![
                         ("h/l", "brightness (Off)"),
                         ("j/k", "select"),
-                        ("w", "save"),
+                        ("w", "save to hw"),
                         ("?", "help"),
                         ("q", "quit"),
                     ]
@@ -142,7 +131,7 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
                         ("j/k", "select"),
                         ("h/l", "adjust"),
                         ("c/enter", "picker"),
-                        ("w", "apply"),
+                        ("w", "save to hw"),
                         ("?", "help"),
                         ("q", "quit"),
                     ]
@@ -217,15 +206,33 @@ pub fn render_gauge(
     theme: &Theme,
 ) -> Line<'static> {
     let p = percent.clamp(0, 100) as usize;
-    let filled = (p * width) / 100;
-    let empty = width.saturating_sub(filled);
+    let total_substeps = width * 8;
+    let filled_substeps = (p * total_substeps) / 100;
+    let full_blocks = filled_substeps / 8;
+    let rem = filled_substeps % 8;
 
-    Line::from(vec![
-        Span::styled(format!("{label: <16}: "), Style::default().fg(theme.dim)),
-        Span::styled("█".repeat(filled), Style::default().fg(color)),
-        Span::styled("━".repeat(empty), Style::default().fg(theme.dim)),
-        Span::styled(format!("  {val_str}"), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
-    ])
+    let mut spans = Vec::new();
+    spans.push(Span::styled(format!("{label: <16}: "), Style::default().fg(theme.dim)));
+    spans.push(Span::styled("[", Style::default().fg(theme.dim)));
+
+    if full_blocks > 0 {
+        spans.push(Span::styled("█".repeat(full_blocks), Style::default().fg(color)));
+    }
+    if rem > 0 && full_blocks < width {
+        const FRACTIONAL: [char; 8] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+        spans.push(Span::styled(FRACTIONAL[rem].to_string(), Style::default().fg(color)));
+    }
+
+    let filled_cells = if rem > 0 { full_blocks + 1 } else { full_blocks };
+    let empty_cells = width.saturating_sub(filled_cells);
+    if empty_cells > 0 {
+        spans.push(Span::styled("░".repeat(empty_cells), Style::default().fg(theme.dim)));
+    }
+
+    spans.push(Span::styled("]", Style::default().fg(theme.dim)));
+    spans.push(Span::styled(format!("  {val_str}"), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)));
+
+    Line::from(spans)
 }
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
