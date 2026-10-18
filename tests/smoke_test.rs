@@ -203,4 +203,45 @@ async fn test_aura_brightness_guardrail() {
     assert_ne!(app.aura_mode, initial_mode, "Effect mode should change when brightness > 0");
 }
 
+#[tokio::test]
+async fn test_fan_curve_repair() {
+    let mut curve = FanCurve::new(
+        "CPU",
+        [40, 50, 60, 70, 75, 80, 85, 90],
+        [10, 20, 77, 50, 60, 70, 85, 100], // pt2 is 77, pt3 is 50 -> non-monotonic
+        true,
+    );
+    assert!(curve.check_monotonicity().is_err(), "Must detect non-monotonic curve");
+    let repaired = curve.repair();
+    assert!(repaired, "repair() should return true when curve was modified");
+    assert!(curve.check_monotonicity().is_ok(), "Repaired curve must be monotonic");
+    assert!(curve.points[3].pwm_percent >= curve.points[2].pwm_percent);
+}
+
+#[tokio::test]
+async fn test_render_all_tabs_80x24_and_120x40() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+
+    let tabs = [
+        ActiveTab::Dashboard,
+        ActiveTab::Power,
+        ActiveTab::FanCurves,
+        ActiveTab::Aura,
+        ActiveTab::Gpu,
+        ActiveTab::Armoury,
+    ];
+
+    for (w, h) in [(80, 24), (120, 40), (50, 12)] {
+        let test_backend = ratatui::backend::TestBackend::new(w, h);
+        let mut terminal = ratatui::Terminal::new(test_backend).expect("terminal creation");
+
+        for tab in tabs {
+            app.current_tab = tab;
+            terminal.draw(|f| rogtui::ui::render_ui(f, &app)).expect("draw succeeded");
+        }
+    }
+}
+
+
 

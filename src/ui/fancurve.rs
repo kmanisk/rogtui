@@ -1,76 +1,115 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
+    symbols::Marker,
     text::{Line, Span},
-    widgets::{
-        canvas::{Canvas, Line as CanvasLine, Points},
-        Block, BorderType, Borders, Paragraph,
-    },
+    widgets::{Axis, Chart, Dataset, GraphType, Paragraph},
     Frame,
 };
 
 use crate::app::AppState;
 use crate::backend::Backend;
+use crate::ui::widgets::panel_block;
 
 pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
-    let main_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1), // Top status line
-            Constraint::Min(10),   // Graph + Table
-        ])
-        .split(area);
+    let theme = &app.theme;
 
     let active_curve = app.fan_curves.get(app.active_fan_idx);
     let fan_name = active_curve.map(|c| c.fan_name.as_str()).unwrap_or("Fan");
     let is_custom = active_curve.map(|c| c.enabled).unwrap_or(false);
     let is_modified = app.is_fan_curve_modified();
 
-    // 1. Top status line
+    let preset_name = match app.current_preset_idx {
+        0 => "Silent",
+        1 => "Balanced",
+        _ => "Aggressive",
+    };
+
+    let is_monotonic = active_curve.map(|c| c.check_monotonicity().is_ok()).unwrap_or(true);
+
+    // Layout: Top Selector (1), Optional Warning Line (0 or 1), Chart Area (Min), Readout (1)
+    let warn_height = if !is_monotonic { 1 } else { 0 };
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),           // Profile / Fan / Preset row
+            Constraint::Length(warn_height), // Non-monotonic warning
+            Constraint::Min(12),             // Chart & optional Table
+            Constraint::Length(1),           // Readout & live operating point
+        ])
+        .split(area);
+
+    // 1. Profile selector row
     let mut top_spans = vec![
-        Span::styled("Profile: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(app.platform_profile.as_str(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-        Span::raw("   "),
-        Span::styled("Fan: ", Style::default().fg(Color::DarkGray)),
-        Span::styled(fan_name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-        Span::raw("   "),
-        Span::styled("Custom: ", Style::default().fg(Color::DarkGray)),
+        Span::styled("Profile: ", Style::default().fg(theme.dim)),
         Span::styled(
-            if is_custom { "on" } else { "off" },
-            if is_custom { Style::default().fg(Color::Green) } else { Style::default().fg(Color::DarkGray) },
+            format!("[ {} ]", app.platform_profile.as_str()),
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("Fan: ", Style::default().fg(theme.dim)),
+        Span::styled(
+            format!("[ {} ({}/{}) ]", fan_name, app.active_fan_idx + 1, app.fan_curves.len()),
+            Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled("Preset: ", Style::default().fg(theme.dim)),
+        Span::styled(
+            format!("[ {} ]", preset_name),
+            Style::default().fg(theme.fg),
+        ),
+        Span::raw("  "),
+        Span::styled("Custom: ", Style::default().fg(theme.dim)),
+        Span::styled(
+            if is_custom { "[ On ]" } else { "[ Off ]" },
+            if is_custom { Style::default().fg(theme.ok) } else { Style::default().fg(theme.dim) },
         ),
     ];
 
     if is_modified {
-        top_spans.push(Span::raw("   "));
-        top_spans.push(Span::styled("[modified]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+        top_spans.push(Span::raw("  "));
+        top_spans.push(Span::styled(
+            "[*] Unsaved changes",
+            Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
+        ));
     }
     if app.apply_all_fans {
-        top_spans.push(Span::raw("   "));
-        top_spans.push(Span::styled("[apply all fans: ON]", Style::default().fg(Color::Magenta)));
-    }
-    if app.show_other_fan_overlay {
-        top_spans.push(Span::raw("   "));
-        top_spans.push(Span::styled("[overlay: ON]", Style::default().fg(Color::DarkGray)));
+        top_spans.push(Span::raw("  "));
+        top_spans.push(Span::styled(
+            "[All fans linked]",
+            Style::default().fg(theme.accent),
+        ));
     }
 
     f.render_widget(Paragraph::new(Line::from(top_spans)), main_chunks[0]);
 
-    // 2. Body: Split into Graph (left) and optional Point Table (right)
+    // Warning row if non-monotonic
+    if !is_monotonic {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    "! Non-monotonic curve detected. Press 'x' to repair.",
+                    Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
+                ),
+            ])),
+            main_chunks[1],
+        );
+    }
+
+    // 2. Body: Chart and side Table (if width >= 100 or table toggled)
     let show_table = app.show_point_table || area.width >= 100;
     let body_chunks = if show_table {
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(50), Constraint::Length(26)])
-            .split(main_chunks[1])
+            .constraints([Constraint::Min(48), Constraint::Length(28)])
+            .split(main_chunks[2])
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(100)])
-            .split(main_chunks[1])
+            .split(main_chunks[2])
     };
 
-    // Render Canvas
     if let Some(curve) = active_curve {
         let applied_curve = app.applied_fan_curves.get(app.active_fan_idx);
         let other_fan_idx = if app.active_fan_idx == 0 { 1 } else { 0 };
@@ -80,7 +119,7 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
             None
         };
 
-        // Live telemetry for operating point
+        // Live telemetry
         let live_temp = if app.active_fan_idx == 0 {
             app.sensors.cpu_temp_c.unwrap_or(50) as f64
         } else {
@@ -93,184 +132,153 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
         };
         let live_speed = curve.interpolate(live_temp);
 
-        let live_readout = format!("now {:.0}C -> {:.0}% ({} RPM)", live_temp, live_speed, live_rpm);
+        // Interpolated line coordinates for active curve (smooth Braille line)
+        let mut curve_data: Vec<(f64, f64)> = Vec::with_capacity(141);
+        for t in 30..=100 {
+            let temp = t as f64;
+            curve_data.push((temp, curve.interpolate(temp)));
+        }
 
-        let canvas = Canvas::default()
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .title(Span::styled(format!(" Fan Curve Graph [{live_readout}] "), Style::default().fg(Color::White))),
+        // Applied curve line if modified
+        let mut applied_data: Vec<(f64, f64)> = Vec::new();
+        if is_modified {
+            if let Some(appl) = applied_curve {
+                for t in 30..=100 {
+                    let temp = t as f64;
+                    applied_data.push((temp, appl.interpolate(temp)));
+                }
+            }
+        }
+
+        // Other fan overlay
+        let mut other_data: Vec<(f64, f64)> = Vec::new();
+        if let Some(other) = other_curve {
+            for t in 30..=100 {
+                let temp = t as f64;
+                other_data.push((temp, other.interpolate(temp)));
+            }
+        }
+
+        // Control points
+        let point_coords: Vec<(f64, f64)> = curve
+            .points
+            .iter()
+            .map(|p| (p.temp as f64, p.pwm_percent as f64))
+            .collect();
+
+        // Selected point
+        let selected_coord: Vec<(f64, f64)> = curve
+            .points
+            .get(app.active_point_idx)
+            .map(|p| vec![(p.temp as f64, p.pwm_percent as f64)])
+            .unwrap_or_default();
+
+        // Live vertical indicator line
+        let live_v_line: Vec<(f64, f64)> = vec![(live_temp, 0.0), (live_temp, live_speed)];
+        let live_pt: Vec<(f64, f64)> = vec![(live_temp, live_speed)];
+
+        let mut datasets = Vec::new();
+
+        // Other fan overlay dataset
+        if !other_data.is_empty() {
+            datasets.push(
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(ratatui::style::Color::Magenta))
+                    .data(&other_data),
+            );
+        }
+
+        // Applied curve dataset
+        if !applied_data.is_empty() {
+            datasets.push(
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(theme.dim))
+                    .data(&applied_data),
+            );
+        }
+
+        // Active curve dataset
+        datasets.push(
+            Dataset::default()
+                .marker(Marker::Braille)
+                .graph_type(GraphType::Line)
+                .style(Style::default().fg(theme.accent))
+                .data(&curve_data),
+        );
+
+        // Control points
+        datasets.push(
+            Dataset::default()
+                .marker(Marker::Dot)
+                .graph_type(GraphType::Scatter)
+                .style(Style::default().fg(theme.fg))
+                .data(&point_coords),
+        );
+
+        // Selected point
+        datasets.push(
+            Dataset::default()
+                .marker(Marker::Block)
+                .graph_type(GraphType::Scatter)
+                .style(Style::default().fg(theme.warn))
+                .data(&selected_coord),
+        );
+
+        // Live operating point indicator
+        if (30.0..=100.0).contains(&live_temp) {
+            datasets.push(
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(theme.dim))
+                    .data(&live_v_line),
+            );
+            datasets.push(
+                Dataset::default()
+                    .marker(Marker::Dot)
+                    .graph_type(GraphType::Scatter)
+                    .style(Style::default().fg(theme.ok))
+                    .data(&live_pt),
+            );
+        }
+
+        let chart_block = panel_block(format!(" {} Fan Curve ", fan_name), true, theme);
+
+        let chart = Chart::new(datasets)
+            .block(chart_block)
+            .x_axis(
+                Axis::default()
+                    .title("Temp (°C)")
+                    .style(Style::default().fg(theme.dim))
+                    .bounds([30.0, 100.0])
+                    .labels(["30", "40", "50", "60", "70", "80", "90", "100"]),
             )
-            .x_bounds([30.0, 100.0])
-            .y_bounds([0.0, 100.0])
-            .paint(|ctx| {
-                // 1. Faint grid lines at 10C increments (X) and 20% increments (Y)
-                for t in (40..=90).step_by(10) {
-                    ctx.draw(&CanvasLine {
-                        x1: t as f64,
-                        y1: 0.0,
-                        x2: t as f64,
-                        y2: 100.0,
-                        color: Color::DarkGray,
-                    });
-                }
-                for s in (20..=80).step_by(20) {
-                    ctx.draw(&CanvasLine {
-                        x1: 30.0,
-                        y1: s as f64,
-                        x2: 100.0,
-                        y2: s as f64,
-                        color: Color::DarkGray,
-                    });
-                }
+            .y_axis(
+                Axis::default()
+                    .title("Speed (%)")
+                    .style(Style::default().fg(theme.dim))
+                    .bounds([0.0, 100.0])
+                    .labels(["0%", "25%", "50%", "75%", "100%"]),
+            );
 
-                // 2. Draw other fan overlay in dim magenta if toggled (key 'o')
-                if let Some(other) = other_curve {
-                    if !other.points.is_empty() {
-                        let first = &other.points[0];
-                        ctx.draw(&CanvasLine {
-                            x1: 30.0,
-                            y1: first.pwm_percent as f64,
-                            x2: first.temp as f64,
-                            y2: first.pwm_percent as f64,
-                            color: Color::Magenta,
-                        });
-                        for i in 0..other.points.len().saturating_sub(1) {
-                            let p1 = &other.points[i];
-                            let p2 = &other.points[i + 1];
-                            ctx.draw(&CanvasLine {
-                                x1: p1.temp as f64,
-                                y1: p1.pwm_percent as f64,
-                                x2: p2.temp as f64,
-                                y2: p2.pwm_percent as f64,
-                                color: Color::Magenta,
-                            });
-                        }
-                        let last = &other.points[other.points.len() - 1];
-                        ctx.draw(&CanvasLine {
-                            x1: last.temp as f64,
-                            y1: last.pwm_percent as f64,
-                            x2: 100.0,
-                            y2: last.pwm_percent as f64,
-                            color: Color::Magenta,
-                        });
-                    }
-                }
+        f.render_widget(chart, body_chunks[0]);
 
-                // 3. Draw applied curve in dim dark gray if [modified]
-                if is_modified {
-                    if let Some(appl) = applied_curve {
-                        if !appl.points.is_empty() {
-                            let first = &appl.points[0];
-                            ctx.draw(&CanvasLine {
-                                x1: 30.0,
-                                y1: first.pwm_percent as f64,
-                                x2: first.temp as f64,
-                                y2: first.pwm_percent as f64,
-                                color: Color::DarkGray,
-                            });
-                            for i in 0..appl.points.len().saturating_sub(1) {
-                                let p1 = &appl.points[i];
-                                let p2 = &appl.points[i + 1];
-                                ctx.draw(&CanvasLine {
-                                    x1: p1.temp as f64,
-                                    y1: p1.pwm_percent as f64,
-                                    x2: p2.temp as f64,
-                                    y2: p2.pwm_percent as f64,
-                                    color: Color::DarkGray,
-                                });
-                            }
-                            let last = &appl.points[appl.points.len() - 1];
-                            ctx.draw(&CanvasLine {
-                                x1: last.temp as f64,
-                                y1: last.pwm_percent as f64,
-                                x2: 100.0,
-                                y2: last.pwm_percent as f64,
-                                color: Color::DarkGray,
-                            });
-                        }
-                    }
-                }
-
-                // 4. Draw current curve (flat to edge, segments, flat to edge)
-                if !curve.points.is_empty() {
-                    let first = &curve.points[0];
-                    ctx.draw(&CanvasLine {
-                        x1: 30.0,
-                        y1: first.pwm_percent as f64,
-                        x2: first.temp as f64,
-                        y2: first.pwm_percent as f64,
-                        color: Color::Cyan,
-                    });
-
-                    for i in 0..curve.points.len().saturating_sub(1) {
-                        let p1 = &curve.points[i];
-                        let p2 = &curve.points[i + 1];
-                        ctx.draw(&CanvasLine {
-                            x1: p1.temp as f64,
-                            y1: p1.pwm_percent as f64,
-                            x2: p2.temp as f64,
-                            y2: p2.pwm_percent as f64,
-                            color: Color::Cyan,
-                        });
-                    }
-
-                    let last = &curve.points[curve.points.len() - 1];
-                    ctx.draw(&CanvasLine {
-                        x1: last.temp as f64,
-                        y1: last.pwm_percent as f64,
-                        x2: 100.0,
-                        y2: last.pwm_percent as f64,
-                        color: Color::Cyan,
-                    });
-
-                    // 5. Draw all 8 points
-                    let coords: Vec<(f64, f64)> = curve.points.iter().map(|p| (p.temp as f64, p.pwm_percent as f64)).collect();
-                    ctx.draw(&Points {
-                        coords: &coords,
-                        color: Color::White,
-                    });
-
-                    // 6. Selected point in bright contrasting Yellow
-                    if let Some(sel) = curve.points.get(app.active_point_idx) {
-                        ctx.draw(&Points {
-                            coords: &[(sel.temp as f64, sel.pwm_percent as f64)],
-                            color: Color::Yellow,
-                        });
-                        // Label next to selected point
-                        let lbl = format!("{}C {}%", sel.temp, sel.pwm_percent);
-                        let offset_y = if sel.pwm_percent > 85 { -6.0 } else { 4.0 };
-                        ctx.print(sel.temp as f64 + 1.0, (sel.pwm_percent as f64 + offset_y).clamp(2.0, 96.0), lbl);
-                    }
-
-                    // 7. Live Operating Point (vertical line + cross marker)
-                    if (30.0..=100.0).contains(&live_temp) {
-                        ctx.draw(&CanvasLine {
-                            x1: live_temp,
-                            y1: 0.0,
-                            x2: live_temp,
-                            y2: 100.0,
-                            color: Color::DarkGray,
-                        });
-                        ctx.draw(&Points {
-                            coords: &[(live_temp, live_speed)],
-                            color: Color::Green,
-                        });
-                    }
-                }
-            });
-
-        f.render_widget(canvas, body_chunks[0]);
-
-        // Render Point Table (if visible)
+        // Point Table
         if show_table {
+            let tbl_block = panel_block(" 8-Point Calibration ", false, theme);
+            let tbl_inner = tbl_block.inner(body_chunks[1]);
+            f.render_widget(tbl_block, body_chunks[1]);
+
             let mut tbl_lines = Vec::new();
-            tbl_lines.push(Line::from(Span::styled("-- Points Table --", Style::default().fg(Color::DarkGray))));
             tbl_lines.push(Line::from(vec![
-                Span::styled("Pt  ", Style::default().fg(Color::DarkGray)),
-                Span::styled("Temp   ", Style::default().fg(Color::DarkGray)),
-                Span::styled("Speed", Style::default().fg(Color::DarkGray)),
+                Span::styled("Pt ", Style::default().fg(theme.dim)),
+                Span::styled("Temp   ", Style::default().fg(theme.dim)),
+                Span::styled("Speed  ", Style::default().fg(theme.dim)),
+                Span::styled("Status", Style::default().fg(theme.dim)),
             ]));
 
             for (idx, pt) in curve.points.iter().enumerate() {
@@ -278,23 +286,59 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
                 let is_pt_mod = app.active_point_is_modified(idx);
 
                 let marker = if is_pt_mod { "*" } else { " " };
-                let style = if is_sel {
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-                } else if is_pt_mod {
-                    Style::default().fg(Color::Cyan)
+                let status = if is_pt_mod { "mod" } else { "ok" };
+
+                let row_str = format!("{}{:<2} {:>3}°C  {:>3}%   {:<3}", if is_sel { ">" } else { " " }, format!("{}{}", idx + 1, marker), pt.temp, pt.pwm_percent, status);
+                let w = tbl_inner.width as usize;
+                let padded = if row_str.len() < w {
+                    format!("{}{}", row_str, " ".repeat(w - row_str.len()))
                 } else {
-                    Style::default().fg(Color::White)
+                    row_str
                 };
 
-                let prefix = if is_sel { ">" } else { " " };
-                tbl_lines.push(Line::from(vec![
-                    Span::styled(format!("{prefix}{}{}  ", idx + 1, marker), style),
-                    Span::styled(format!("{: >3} C   ", pt.temp), style),
-                    Span::styled(format!("{: >3} %", pt.pwm_percent), style),
-                ]));
+                if is_sel {
+                    tbl_lines.push(Line::from(Span::styled(padded, theme.sel_style())));
+                } else if is_pt_mod {
+                    tbl_lines.push(Line::from(Span::styled(padded, Style::default().fg(theme.warn))));
+                } else {
+                    tbl_lines.push(Line::from(Span::styled(padded, Style::default().fg(theme.fg))));
+                }
             }
 
-            f.render_widget(Paragraph::new(tbl_lines), body_chunks[1]);
+            f.render_widget(Paragraph::new(tbl_lines), tbl_inner);
         }
+
+        // 3. Readout row at bottom
+        let (p_temp, p_speed) = if let Some(p) = curve.points.get(app.active_point_idx) {
+            (p.temp, p.pwm_percent)
+        } else {
+            (0, 0)
+        };
+        let was_speed = applied_curve
+            .and_then(|c| c.points.get(app.active_point_idx))
+            .map(|p| p.pwm_percent);
+        let delta_str = match was_speed {
+            Some(w) if w != p_speed => format!(" (was {w}%)"),
+            _ => String::new(),
+        };
+
+        let readout_spans = vec![
+            Span::styled(
+                format!("Point {}/8: ", app.active_point_idx + 1),
+                Style::default().fg(theme.dim),
+            ),
+            Span::styled(
+                format!("{}°C -> {}% PWM{}", p_temp, p_speed, delta_str),
+                Style::default().fg(theme.warn).add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("   |   "),
+            Span::styled("Live Operating Point: ", Style::default().fg(theme.dim)),
+            Span::styled(
+                format!("{:.0}°C -> {:.0}% ({} RPM)", live_temp, live_speed, live_rpm),
+                Style::default().fg(theme.ok).add_modifier(Modifier::BOLD),
+            ),
+        ];
+
+        f.render_widget(Paragraph::new(Line::from(readout_spans)), main_chunks[3]);
     }
 }

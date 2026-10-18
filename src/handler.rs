@@ -79,6 +79,17 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                             app.set_status(format!("Platform Profile: {}", target_profile.as_str()), false);
                         }
                     }
+                    ConfirmAction::ApplyArmouryAttr { node_name, value, display_name } => {
+                        match app.backend.set_armoury_attribute(&node_name, value).await {
+                            Ok(()) => {
+                                if let Ok(attrs) = app.backend.get_armoury_attributes().await {
+                                    app.armoury_attributes = attrs;
+                                }
+                                app.set_status(format!("{display_name} updated successfully"), false);
+                            }
+                            Err(e) => app.set_status(format!("Failed to set {display_name}: {e}"), true),
+                        }
+                    }
                 }
                 app.confirm_modal = None;
             }
@@ -367,6 +378,11 @@ async fn handle_fancurve<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
                 format!("Reset fan curves to factory BIOS defaults for {}?", app.platform_profile.as_str()),
                 ConfirmAction::ResetFanCurve(app.platform_profile),
             ));
+        }
+
+        // Repair non-monotonic fan curve
+        KeyCode::Char('x') => {
+            app.repair_active_fan_curve();
         }
 
         // Presets: cycle (s) or save current (S)
@@ -721,11 +737,44 @@ async fn handle_armoury<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
         return;
     }
     match key.code {
+        KeyCode::Char('u') => {
+            app.show_unavailable_armoury = !app.show_unavailable_armoury;
+            app.set_status(
+                if app.show_unavailable_armoury {
+                    "Unavailable attributes: shown"
+                } else {
+                    "Unavailable attributes: collapsed"
+                },
+                false,
+            );
+        }
         KeyCode::Down | KeyCode::Char('j') => {
-            app.armoury_selected_idx = (app.armoury_selected_idx + 1) % app.armoury_attributes.len();
+            let visible_indices: Vec<usize> = app
+                .armoury_attributes
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| a.is_available || app.show_unavailable_armoury)
+                .map(|(i, _)| i)
+                .collect();
+            if !visible_indices.is_empty() {
+                let cur_pos = visible_indices.iter().position(|&i| i == app.armoury_selected_idx).unwrap_or(0);
+                let next_pos = (cur_pos + 1) % visible_indices.len();
+                app.armoury_selected_idx = visible_indices[next_pos];
+            }
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            app.armoury_selected_idx = (app.armoury_selected_idx + app.armoury_attributes.len() - 1) % app.armoury_attributes.len();
+            let visible_indices: Vec<usize> = app
+                .armoury_attributes
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| a.is_available || app.show_unavailable_armoury)
+                .map(|(i, _)| i)
+                .collect();
+            if !visible_indices.is_empty() {
+                let cur_pos = visible_indices.iter().position(|&i| i == app.armoury_selected_idx).unwrap_or(0);
+                let next_pos = (cur_pos + visible_indices.len() - 1) % visible_indices.len();
+                app.armoury_selected_idx = visible_indices[next_pos];
+            }
         }
         KeyCode::Left | KeyCode::Char('h') => {
             adjust_armoury_attr(app, -1).await;
@@ -775,6 +824,30 @@ async fn adjust_armoury_attr<B: Backend>(app: &mut AppState<B>, dir: i32) {
             }
             crate::backend::types::AttributeKind::ReadOnly => return,
         };
+
+        if new_val == attr.current_value {
+            return;
+        }
+
+        // Reboot confirmation modal for hardware switches
+        if node == "gpu_mux_mode" || node == "dgpu_disable" {
+            let label = if node == "gpu_mux_mode" {
+                if new_val == 0 { "dGPU Direct (MUX)" } else { "Optimus / Hybrid" }
+            } else if new_val == 1 {
+                "Disabled (dGPU off)"
+            } else {
+                "Enabled (dGPU on)"
+            };
+            app.confirm_modal = Some((
+                format!("Switch {} to {}? This hardware change requires a reboot.", attr.display_name, label),
+                ConfirmAction::ApplyArmouryAttr {
+                    node_name: node,
+                    value: new_val,
+                    display_name: attr.display_name,
+                },
+            ));
+            return;
+        }
 
         match app.backend.set_armoury_attribute(&node, new_val).await {
             Ok(()) => {

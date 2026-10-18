@@ -50,19 +50,21 @@ pub type FanCurveTuple = (String, EightBytes, EightBytes, bool);
 
 impl FanCurve {
     pub fn new(fan_name: impl Into<String>, temps: [u8; 8], pwms: [u8; 8], enabled: bool) -> Self {
+        // In asusd, DBus PWM bytes are always 0..=255.
+        // If any byte > 100 or top byte == 255, scale from 0..=255 to 0..=100.
+        let is_raw_255 = pwms.iter().any(|&p| p > 100) || pwms[7] == 255;
         let points = temps
             .iter()
             .zip(pwms.iter())
             .map(|(&t, &p)| {
-                // Convert raw pwm (0..=255) to percent (0..=100) if > 100
-                let pwm_percent = if p > 100 {
+                let pwm_percent = if is_raw_255 {
                     ((p as u32 * 100 + 127) / 255) as u8
                 } else {
                     p
                 };
                 FanCurvePoint {
                     temp: t,
-                    pwm_percent,
+                    pwm_percent: pwm_percent.min(100),
                 }
             })
             .collect();
@@ -71,6 +73,54 @@ impl FanCurve {
             points,
             enabled,
         }
+    }
+
+    pub fn check_monotonicity(&self) -> Result<(), String> {
+        for i in 0..self.points.len().saturating_sub(1) {
+            if self.points[i].pwm_percent > self.points[i + 1].pwm_percent {
+                return Err(format!(
+                    "curve decreases between pt{} ({}%) and pt{} ({}%), press 'x' to repair",
+                    i + 1,
+                    self.points[i].pwm_percent,
+                    i + 2,
+                    self.points[i + 1].pwm_percent
+                ));
+            }
+            if self.points[i].temp > self.points[i + 1].temp {
+                return Err(format!(
+                    "temperature decreases between pt{} ({} C) and pt{} ({} C), press 'x' to repair",
+                    i + 1,
+                    self.points[i].temp,
+                    i + 2,
+                    self.points[i + 1].temp
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn repair(&mut self) -> bool {
+        let mut modified = false;
+        // 1. Enforce non-decreasing speed (running max)
+        let mut cur_max_speed = 0u8;
+        for pt in &mut self.points {
+            if pt.pwm_percent < cur_max_speed {
+                pt.pwm_percent = cur_max_speed;
+                modified = true;
+            } else {
+                cur_max_speed = pt.pwm_percent;
+            }
+        }
+        // 2. Enforce strictly increasing temperatures
+        let mut cur_min_temp = 30u8;
+        for pt in &mut self.points {
+            if pt.temp < cur_min_temp {
+                pt.temp = cur_min_temp;
+                modified = true;
+            }
+            cur_min_temp = (pt.temp + 1).min(100);
+        }
+        modified
     }
 
     pub fn to_dbus_raw(&self) -> FanCurveTuple {
@@ -227,24 +277,26 @@ impl FanCurve {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuMode {
-    Dedicated = 0,
+    Hybrid = 0,
     Integrated = 1,
-    Hybrid = 2,
+    NvidiaNoModeset = 2,
     Vfio = 3,
     AsusEgpu = 4,
     AsusMuxDgpu = 5,
+    None = 6,
     Unknown = 99,
 }
 
 impl GpuMode {
     pub fn from_u32(val: u32) -> Self {
         match val {
-            0 => GpuMode::Dedicated,
+            0 => GpuMode::Hybrid,
             1 => GpuMode::Integrated,
-            2 => GpuMode::Hybrid,
+            2 => GpuMode::NvidiaNoModeset,
             3 => GpuMode::Vfio,
             4 => GpuMode::AsusEgpu,
             5 => GpuMode::AsusMuxDgpu,
+            6 => GpuMode::None,
             _ => GpuMode::Unknown,
         }
     }
@@ -255,78 +307,82 @@ impl GpuMode {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            GpuMode::Dedicated => "Dedicated",
-            GpuMode::Integrated => "Integrated",
             GpuMode::Hybrid => "Hybrid",
+            GpuMode::Integrated => "Integrated",
+            GpuMode::NvidiaNoModeset => "NvidiaNoModeset",
             GpuMode::Vfio => "VFIO",
             GpuMode::AsusEgpu => "ASUS eGPU",
             GpuMode::AsusMuxDgpu => "AsusMuxDgpu (Direct dGPU MUX)",
-            GpuMode::Unknown => "Unknown",
+            GpuMode::None => "None",
+            GpuMode::Unknown => "-",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GpuPowerState {
-    Unknown = 0,
-    Off = 1,
-    Active = 2,
-    Suspended = 3,
+    Active = 0,
+    Suspended = 1,
+    Off = 2,
+    AsusDisabled = 3,
     AsusMuxDiscreet = 4,
-    AsusDisabled = 5,
+    Unknown = 5,
 }
 
 impl GpuPowerState {
     pub fn from_u32(val: u32) -> Self {
         match val {
-            1 => GpuPowerState::Off,
-            2 => GpuPowerState::Active,
-            3 => GpuPowerState::Suspended,
+            0 => GpuPowerState::Active,
+            1 => GpuPowerState::Suspended,
+            2 => GpuPowerState::Off,
+            3 => GpuPowerState::AsusDisabled,
             4 => GpuPowerState::AsusMuxDiscreet,
-            5 => GpuPowerState::AsusDisabled,
             _ => GpuPowerState::Unknown,
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
-            GpuPowerState::Unknown => "Unknown",
-            GpuPowerState::Off => "Powered Off",
             GpuPowerState::Active => "Active",
             GpuPowerState::Suspended => "Suspended (D3cold)",
-            GpuPowerState::AsusMuxDiscreet => "Direct MUX (Hardware Bypass)",
+            GpuPowerState::Off => "Powered Off",
             GpuPowerState::AsusDisabled => "Disabled via ACPI",
+            GpuPowerState::AsusMuxDiscreet => "Active (Direct MUX)",
+            GpuPowerState::Unknown => "-",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PendingUserAction {
-    Nothing = 0,
-    Logout = 1,
-    Reboot = 2,
-    SwitchToIntegrated = 3,
+    Logout = 0,
+    Reboot = 1,
+    SwitchToIntegrated = 2,
+    AsusEgpuDisable = 3,
+    Nothing = 4,
     Unknown = 99,
 }
 
 impl PendingUserAction {
     pub fn from_u32(val: u32) -> Self {
         match val {
-            0 => PendingUserAction::Nothing,
-            1 => PendingUserAction::Logout,
-            2 => PendingUserAction::Reboot,
-            3 => PendingUserAction::SwitchToIntegrated,
+            0 => PendingUserAction::Logout,
+            1 => PendingUserAction::Reboot,
+            2 => PendingUserAction::SwitchToIntegrated,
+            3 => PendingUserAction::AsusEgpuDisable,
+            4 => PendingUserAction::Nothing,
             _ => PendingUserAction::Unknown,
         }
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
-            PendingUserAction::Nothing => "None required",
+            PendingUserAction::Nothing => "None",
             PendingUserAction::Logout => "Session Logout Required",
             PendingUserAction::Reboot => "System Reboot Required",
             PendingUserAction::SwitchToIntegrated => "Must switch to Integrated first",
-            PendingUserAction::Unknown => "Unknown action",
+            PendingUserAction::AsusEgpuDisable => "Disable ASUS eGPU first",
+            PendingUserAction::Unknown => "-",
         }
     }
 }
@@ -397,6 +453,114 @@ pub struct ArmouryAttribute {
     pub scalar_increment: i32,
     pub kind: AttributeKind,
     pub is_available: bool,
+}
+
+impl ArmouryAttribute {
+    pub fn category(&self) -> &'static str {
+        match self.node_name.as_str() {
+            "gpu_mux_mode" | "dgpu_disable" | "nv_base_tgp" | "nv_tgp" | "nv_dynamic_boost" | "nv_temp_target" => "GPU",
+            "panel_overdrive" | "screen_auto_brightness" => "Display",
+            "ppt_pl1_spl" | "ppt_pl2_sppt" => "Power limits",
+            "charge_mode" => "Battery",
+            _ => "General",
+        }
+    }
+
+    pub fn display_value(&self) -> String {
+        if !self.is_available {
+            return "Unavailable".to_string();
+        }
+        match self.node_name.as_str() {
+            "gpu_mux_mode" => match self.current_value {
+                0 => "dGPU Direct (MUX)".to_string(),
+                1 => "Optimus / Hybrid".to_string(),
+                v => format!("Value {v}"),
+            },
+            "dgpu_disable" => match self.current_value {
+                0 => "[ ] Enabled (dGPU on)".to_string(),
+                1 => "[x] Disabled (dGPU off)".to_string(),
+                v => format!("Value {v}"),
+            },
+            "panel_overdrive" => match self.current_value {
+                1 => "[x] Enabled".to_string(),
+                0 => "[ ] Disabled".to_string(),
+                v => format!("Value {v}"),
+            },
+            "charge_mode" => match self.current_value {
+                0 => "100% (Standard)".to_string(),
+                1 => "80% (Balanced)".to_string(),
+                2 => "60% (Max Lifespan)".to_string(),
+                v => format!("Mode {v}"),
+            },
+            "screen_auto_brightness" => match self.current_value {
+                1 => "[x] Enabled".to_string(),
+                0 => "[ ] Disabled".to_string(),
+                v => format!("Value {v}"),
+            },
+            _ => match self.kind {
+                AttributeKind::Toggle => {
+                    if self.current_value == 1 {
+                        "[x] Enabled".to_string()
+                    } else {
+                        "[ ] Disabled".to_string()
+                    }
+                }
+                AttributeKind::Enum => format!("< Value: {} >", self.current_value),
+                AttributeKind::Slider => format!("< {} >", self.current_value),
+                AttributeKind::ReadOnly => format!("{}", self.current_value),
+            },
+        }
+    }
+
+    pub fn details(&self) -> (&'static str, Option<&'static str>) {
+        match self.node_name.as_str() {
+            "gpu_mux_mode" => (
+                "Hardware display panel multiplexer switch.\nRoutes internal eDP panel directly to dGPU or iGPU.",
+                Some("Switching MUX mode requires a system reboot."),
+            ),
+            "dgpu_disable" => (
+                "ACPI-level power gate for the discrete GPU.\nCompletely powers down the dGPU hardware.",
+                Some("Requires session reload or reboot to safely apply."),
+            ),
+            "panel_overdrive" => (
+                "LCD panel response time overdrive.\nReduces ghosting during high-refresh gaming.",
+                None,
+            ),
+            "charge_mode" => (
+                "Hardware battery charging thresholds.\nCaps charge limit to prolong lithium battery lifespan.",
+                None,
+            ),
+            "screen_auto_brightness" => (
+                "Ambient light sensor display auto-brightness control.",
+                None,
+            ),
+            "nv_base_tgp" => (
+                "Base total graphics power (TGP) limit in watts.",
+                None,
+            ),
+            "nv_tgp" => (
+                "Configurable total graphics power boost wattage.",
+                None,
+            ),
+            "nv_dynamic_boost" => (
+                "NVIDIA Dynamic Boost power allocation between CPU and GPU.",
+                None,
+            ),
+            "nv_temp_target" => (
+                "Thermal target ceiling for NVIDIA GPU before throttling.",
+                None,
+            ),
+            "ppt_pl1_spl" => (
+                "Sustained power limit (SPL) for CPU package in watts.",
+                None,
+            ),
+            "ppt_pl2_sppt" => (
+                "Slow package power tracking (sPPT) burst limit in watts.",
+                None,
+            ),
+            _ => ("ASUS firmware hardware attribute.", None),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

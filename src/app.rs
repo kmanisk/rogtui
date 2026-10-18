@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::backend::types::{
@@ -5,6 +6,7 @@ use crate::backend::types::{
     PendingUserAction, PlatformProfile, SensorData,
 };
 use crate::backend::Backend;
+use crate::ui::theme::Theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
@@ -69,10 +71,12 @@ pub enum ConfirmAction {
     ResetFanCurve(PlatformProfile),
     DiscardFanChangesSwitchFan(usize),
     DiscardFanChangesSwitchProfile(PlatformProfile),
+    ApplyArmouryAttr { node_name: String, value: i32, display_name: String },
 }
 
 pub struct AppState<B: Backend> {
     pub backend: B,
+    pub theme: Theme,
     pub current_tab: ActiveTab,
     pub show_help: bool,
     pub should_quit: bool,
@@ -122,9 +126,12 @@ pub struct AppState<B: Backend> {
     // Armoury Attributes State
     pub armoury_attributes: Vec<ArmouryAttribute>,
     pub armoury_selected_idx: usize,
+    pub show_unavailable_armoury: bool,
 
-    // Sensors
+    // Sensors and history
     pub sensors: SensorData,
+    pub cpu_temp_history: VecDeque<u64>,
+    pub gpu_temp_history: VecDeque<u64>,
 
     // Power Tab field index
     pub power_selected_field: usize,
@@ -175,10 +182,20 @@ impl<B: Backend> AppState<B> {
         let armoury_attributes = backend.get_armoury_attributes().await.unwrap_or_default();
         let sensors = backend.read_sensors().await.unwrap_or_default();
 
+        let mut cpu_temp_history = VecDeque::with_capacity(60);
+        let mut gpu_temp_history = VecDeque::with_capacity(60);
+        if let Some(c) = sensors.cpu_temp_c {
+            cpu_temp_history.push_back(c as u64);
+        }
+        if let Some(g) = sensors.gpu_temp_c {
+            gpu_temp_history.push_back(g as u64);
+        }
+
         let gpu_selected_idx = gpu_supported.iter().position(|m| *m == gpu_mode).unwrap_or(0);
 
         Ok(Self {
             backend,
+            theme: Theme::load_or_default(),
             current_tab: ActiveTab::Dashboard,
             show_help: false,
             should_quit: false,
@@ -218,7 +235,10 @@ impl<B: Backend> AppState<B> {
             hex_input_buffer: None,
             armoury_attributes,
             armoury_selected_idx: 0,
+            show_unavailable_armoury: false,
             sensors,
+            cpu_temp_history,
+            gpu_temp_history,
             power_selected_field: 0,
         })
     }
@@ -248,6 +268,20 @@ impl<B: Backend> AppState<B> {
         false
     }
 
+    pub fn repair_active_fan_curve(&mut self) -> bool {
+        if let Some(curve) = self.fan_curves.get_mut(self.active_fan_idx) {
+            let repaired = curve.repair();
+            if repaired {
+                self.set_status("Repaired curve to monotonic non-decreasing", false);
+            } else {
+                self.set_status("Curve is already monotonic", false);
+            }
+            repaired
+        } else {
+            false
+        }
+    }
+
     pub fn clear_expired_messages(&mut self) -> bool {
         let mut changed = false;
         if let Some((_, _, inst)) = &self.status_message {
@@ -267,6 +301,18 @@ impl<B: Backend> AppState<B> {
 
     pub async fn refresh_sensors(&mut self) {
         if let Ok(s) = self.backend.read_sensors().await {
+            if let Some(c) = s.cpu_temp_c {
+                self.cpu_temp_history.push_back(c as u64);
+                if self.cpu_temp_history.len() > 60 {
+                    self.cpu_temp_history.pop_front();
+                }
+            }
+            if let Some(g) = s.gpu_temp_c {
+                self.gpu_temp_history.push_back(g as u64);
+                if self.gpu_temp_history.len() > 60 {
+                    self.gpu_temp_history.pop_front();
+                }
+            }
             self.sensors = s;
         }
     }
