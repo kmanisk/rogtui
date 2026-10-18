@@ -1,0 +1,417 @@
+=== ROGTUI DBUS INTROSPECTION DUMP ===
+Generated at: Sun Oct 18 11:04:41 AM UTC 2026
+Machine: ASUS TUF Gaming F16 (FX608JH)
+asusd version: 6.5.0
+supergfxd version: 5.2.7
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /
+================================================================================
+NAME                                TYPE      SIGNATURE  RESULT/VALUE  FLAGS
+org.freedesktop.DBus.Introspectable interface -          -             -
+.Introspect                         method    -          s             -
+org.freedesktop.DBus.ObjectManager  interface -          -             -
+.GetManagedObjects                  method    -          a{oa{sa{sv}}} -
+.InterfacesAdded                    signal    oa{sa{sv}} -             -
+.InterfacesRemoved                  signal    oas        -             -
+org.freedesktop.DBus.Peer           interface -          -             -
+.GetMachineId                       method    -          s             -
+.Ping                               method    -          -             -
+org.freedesktop.DBus.Properties     interface -          -             -
+.Get                                method    ss         v             -
+.GetAll                             method    s          a{sv}         -
+.Set                                method    ssv        -             -
+.PropertiesChanged                  signal    sa{sv}as   -             -
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones
+================================================================================
+NAME                                TYPE      SIGNATURE                 RESULT/VALUE              FLAGS
+org.freedesktop.DBus.Introspectable interface -                         -                         -
+.Introspect                         method    -                         s                         -
+org.freedesktop.DBus.Peer           interface -                         -                         -
+.GetMachineId                       method    -                         s                         -
+.Ping                               method    -                         -                         -
+org.freedesktop.DBus.Properties     interface -                         -                         -
+.Get                                method    ss                        v                         -
+.GetAll                             method    s                         a{sv}                     -
+.Set                                method    ssv                       -                         -
+.PropertiesChanged                  signal    sa{sv}as                  -                         -
+xyz.ljones.FanCurves                interface -                         -                         -
+.FanCurveData                       method    u                         a(s(yyyyyyyy)(yyyyyyyy)b) -
+.SetCurvesToDefaults                method    u                         -                         -
+.SetFanCurve                        method    u(s(yyyyyyyy)(yyyyyyyy)b) -                         -
+.SetFanCurvesEnabled                method    ub                        -                         -
+.SetProfileFanCurveEnabled          method    usb                       -                         -
+xyz.ljones.Platform                 interface -                         -                         -
+.NextPlatformProfile                method    -                         -                         -
+.OneShotFullCharge                  method    -                         -                         -
+.SupportedProperties                method    -                         as                        -
+.ChangePlatformProfileOnAc          property  b                         true                      emits-change writable
+.ChangePlatformProfileOnBattery     property  b                         true                      emits-change writable
+.ChargeControlEndThreshold          property  y                         60                        emits-change writable
+.DisableNvidiaPowerdOnBattery       property  b                         true                      emits-change writable
+.EnablePptGroup                     property  b                         false                     emits-change writable
+.PlatformProfile                    property  u                         0                         emits-change writable
+.PlatformProfileChoices             property  au                        3 2 0 1                   emits-change
+.PlatformProfileLinkedEpp           property  b                         true                      emits-change writable
+.PlatformProfileOnAc                property  u                         0                         emits-change writable
+.PlatformProfileOnBattery           property  u                         2                         emits-change writable
+.ProfileBalancedEpp                 property  u                         3                         emits-change writable
+.ProfilePerformanceEpp              property  u                         1                         emits-change writable
+.ProfileQuietEpp                    property  u                         4                         emits-change writable
+.Version                            property  s                         "6.5.0"                   emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/aura/tuf
+================================================================================
+NAME                                TYPE      SIGNATURE        RESULT/VALUE                      FLAGS
+org.freedesktop.DBus.Introspectable interface -                -                                 -
+.Introspect                         method    -                s                                 -
+org.freedesktop.DBus.Peer           interface -                -                                 -
+.GetMachineId                       method    -                s                                 -
+.Ping                               method    -                -                                 -
+org.freedesktop.DBus.Properties     interface -                -                                 -
+.Get                                method    ss               v                                 -
+.GetAll                             method    s                a{sv}                             -
+.Set                                method    ssv              -                                 -
+.PropertiesChanged                  signal    sa{sv}as         -                                 -
+xyz.ljones.Aura                     interface -                -                                 -
+.AllModeData                        method    -                a{u(uu(yyy)(yyy)ss)}              -
+.DirectAddressingRaw                method    aay              -                                 -
+.Brightness                         property  u                0                                 emits-change writable
+.DeviceType                         property  u                2                                 emits-change
+.LedMode                            property  u                0                                 emits-change writable
+.LedModeData                        property  (uu(yyy)(yyy)ss) 0 0 0 255 124 0 0 0 "Med" "Right" emits-change writable
+.LedPower                           property  (a(ubbbb))       1 1 true true true true           emits-change writable
+.SupportedBasicModes                property  au               4 0 1 2 10                        emits-change
+.SupportedBasicZones                property  au               0                                 emits-change
+.SupportedBrightness                property  au               4 0 1 2 3                         emits-change
+.SupportedPowerZones                property  au               1 1                               emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/charge_mode
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE                        FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                                   -
+.Introspect                         method    -         s                                   -
+org.freedesktop.DBus.Peer           interface -         -                                   -
+.GetMachineId                       method    -         s                                   -
+.Ping                               method    -         -                                   -
+org.freedesktop.DBus.Properties     interface -         -                                   -
+.Get                                method    ss        v                                   -
+.GetAll                             method    s         a{sv}                               -
+.Set                                method    ssv       -                                   -
+.PropertiesChanged                  signal    sa{sv}as  -                                   -
+xyz.ljones.AsusArmoury              interface -         -                                   -
+.ApplyQueuedGpuValue                method    -         b                                   -
+.RestoreDefault                     method    -         -                                   -
+.AvailableAttrs                     property  as        2 "possible_values" "current_value" emits-change
+.CurrentValue                       property  i         1                                   emits-change writable
+.DefaultValue                       property  i         -1                                  emits-change
+.MaxValue                           property  i         -1                                  emits-change
+.MinValue                           property  i         -1                                  emits-change
+.Name                               property  s         "ChargeMode"                        emits-change
+.PossibleValues                     property  ai        3 0 1 2                             emits-change
+.QueuedGpuValue                     property  i         -1                                  emits-change
+.ScalarIncrement                    property  i         -1                                  emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/dgpu_disable
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE                        FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                                   -
+.Introspect                         method    -         s                                   -
+org.freedesktop.DBus.Peer           interface -         -                                   -
+.GetMachineId                       method    -         s                                   -
+.Ping                               method    -         -                                   -
+org.freedesktop.DBus.Properties     interface -         -                                   -
+.Get                                method    ss        v                                   -
+.GetAll                             method    s         a{sv}                               -
+.Set                                method    ssv       -                                   -
+.PropertiesChanged                  signal    sa{sv}as  -                                   -
+xyz.ljones.AsusArmoury              interface -         -                                   -
+.ApplyQueuedGpuValue                method    -         b                                   -
+.RestoreDefault                     method    -         -                                   -
+.AvailableAttrs                     property  as        2 "possible_values" "current_value" emits-change
+.CurrentValue                       property  i         0                                   emits-change writable
+.DefaultValue                       property  i         -1                                  emits-change
+.MaxValue                           property  i         -1                                  emits-change
+.MinValue                           property  i         -1                                  emits-change
+.Name                               property  s         "DgpuDisable"                       emits-change
+.PossibleValues                     property  ai        2 0 1                               emits-change
+.QueuedGpuValue                     property  i         -1                                  emits-change
+.ScalarIncrement                    property  i         -1                                  emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/gpu_mux_mode
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE                        FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                                   -
+.Introspect                         method    -         s                                   -
+org.freedesktop.DBus.Peer           interface -         -                                   -
+.GetMachineId                       method    -         s                                   -
+.Ping                               method    -         -                                   -
+org.freedesktop.DBus.Properties     interface -         -                                   -
+.Get                                method    ss        v                                   -
+.GetAll                             method    s         a{sv}                               -
+.Set                                method    ssv       -                                   -
+.PropertiesChanged                  signal    sa{sv}as  -                                   -
+xyz.ljones.AsusArmoury              interface -         -                                   -
+.ApplyQueuedGpuValue                method    -         b                                   -
+.RestoreDefault                     method    -         -                                   -
+.AvailableAttrs                     property  as        2 "possible_values" "current_value" emits-change
+.CurrentValue                       property  i         0                                   emits-change writable
+.DefaultValue                       property  i         -1                                  emits-change
+.MaxValue                           property  i         -1                                  emits-change
+.MinValue                           property  i         -1                                  emits-change
+.Name                               property  s         "GpuMuxMode"                        emits-change
+.PossibleValues                     property  ai        2 0 1                               emits-change
+.QueuedGpuValue                     property  i         -1                                  emits-change
+.ScalarIncrement                    property  i         -1                                  emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/nv_base_tgp
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE      FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                 -
+.Introspect                         method    -         s                 -
+org.freedesktop.DBus.Peer           interface -         -                 -
+.GetMachineId                       method    -         s                 -
+.Ping                               method    -         -                 -
+org.freedesktop.DBus.Properties     interface -         -                 -
+.Get                                method    ss        v                 -
+.GetAll                             method    s         a{sv}             -
+.Set                                method    ssv       -                 -
+.PropertiesChanged                  signal    sa{sv}as  -                 -
+xyz.ljones.AsusArmoury              interface -         -                 -
+.ApplyQueuedGpuValue                method    -         b                 -
+.RestoreDefault                     method    -         -                 -
+.AvailableAttrs                     property  as        1 "current_value" emits-change
+.CurrentValue                       property  i         0                 emits-change writable
+.DefaultValue                       property  i         -1                emits-change
+.MaxValue                           property  i         -1                emits-change
+.MinValue                           property  i         -1                emits-change
+.Name                               property  s         "DgpuBaseTgp"     emits-change
+.PossibleValues                     property  ai        0                 emits-change
+.QueuedGpuValue                     property  i         -1                emits-change
+.ScalarIncrement                    property  i         -1                emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/nv_dynamic_boost
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE         FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                    -
+.Introspect                         method    -         s                    -
+org.freedesktop.DBus.Peer           interface -         -                    -
+.GetMachineId                       method    -         s                    -
+.Ping                               method    -         -                    -
+org.freedesktop.DBus.Properties     interface -         -                    -
+.Get                                method    ss        v                    -
+.GetAll                             method    s         a{sv}                -
+.Set                                method    ssv       -                    -
+.PropertiesChanged                  signal    sa{sv}as  -                    -
+xyz.ljones.AsusArmoury              interface -         -                    -
+.ApplyQueuedGpuValue                method    -         b                    -
+.RestoreDefault                     method    -         -                    -
+.AvailableAttrs                     property  as        1 "scalar_increment" emits-change
+.CurrentValue                       property  i         -                    emits-change writable
+.DefaultValue                       property  i         -1                   emits-change
+.MaxValue                           property  i         -1                   emits-change
+.MinValue                           property  i         -1                   emits-change
+.Name                               property  s         "NvDynamicBoost"     emits-change
+.PossibleValues                     property  ai        0                    emits-change
+.QueuedGpuValue                     property  i         -1                   emits-change
+.ScalarIncrement                    property  i         1                    emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/nv_temp_target
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE         FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                    -
+.Introspect                         method    -         s                    -
+org.freedesktop.DBus.Peer           interface -         -                    -
+.GetMachineId                       method    -         s                    -
+.Ping                               method    -         -                    -
+org.freedesktop.DBus.Properties     interface -         -                    -
+.Get                                method    ss        v                    -
+.GetAll                             method    s         a{sv}                -
+.Set                                method    ssv       -                    -
+.PropertiesChanged                  signal    sa{sv}as  -                    -
+xyz.ljones.AsusArmoury              interface -         -                    -
+.ApplyQueuedGpuValue                method    -         b                    -
+.RestoreDefault                     method    -         -                    -
+.AvailableAttrs                     property  as        1 "scalar_increment" emits-change
+.CurrentValue                       property  i         -                    emits-change writable
+.DefaultValue                       property  i         -1                   emits-change
+.MaxValue                           property  i         -1                   emits-change
+.MinValue                           property  i         -1                   emits-change
+.Name                               property  s         "NvTempTarget"       emits-change
+.PossibleValues                     property  ai        0                    emits-change
+.QueuedGpuValue                     property  i         -1                   emits-change
+.ScalarIncrement                    property  i         1                    emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/nv_tgp
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE         FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                    -
+.Introspect                         method    -         s                    -
+org.freedesktop.DBus.Peer           interface -         -                    -
+.GetMachineId                       method    -         s                    -
+.Ping                               method    -         -                    -
+org.freedesktop.DBus.Properties     interface -         -                    -
+.Get                                method    ss        v                    -
+.GetAll                             method    s         a{sv}                -
+.Set                                method    ssv       -                    -
+.PropertiesChanged                  signal    sa{sv}as  -                    -
+xyz.ljones.AsusArmoury              interface -         -                    -
+.ApplyQueuedGpuValue                method    -         b                    -
+.RestoreDefault                     method    -         -                    -
+.AvailableAttrs                     property  as        1 "scalar_increment" emits-change
+.CurrentValue                       property  i         -                    emits-change writable
+.DefaultValue                       property  i         -1                   emits-change
+.MaxValue                           property  i         -1                   emits-change
+.MinValue                           property  i         -1                   emits-change
+.Name                               property  s         "DgpuTgp"            emits-change
+.PossibleValues                     property  ai        0                    emits-change
+.QueuedGpuValue                     property  i         -1                   emits-change
+.ScalarIncrement                    property  i         1                    emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/panel_overdrive
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE                        FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                                   -
+.Introspect                         method    -         s                                   -
+org.freedesktop.DBus.Peer           interface -         -                                   -
+.GetMachineId                       method    -         s                                   -
+.Ping                               method    -         -                                   -
+org.freedesktop.DBus.Properties     interface -         -                                   -
+.Get                                method    ss        v                                   -
+.GetAll                             method    s         a{sv}                               -
+.Set                                method    ssv       -                                   -
+.PropertiesChanged                  signal    sa{sv}as  -                                   -
+xyz.ljones.AsusArmoury              interface -         -                                   -
+.ApplyQueuedGpuValue                method    -         b                                   -
+.RestoreDefault                     method    -         -                                   -
+.AvailableAttrs                     property  as        2 "possible_values" "current_value" emits-change
+.CurrentValue                       property  i         1                                   emits-change writable
+.DefaultValue                       property  i         -1                                  emits-change
+.MaxValue                           property  i         -1                                  emits-change
+.MinValue                           property  i         -1                                  emits-change
+.Name                               property  s         "PanelOverdrive"                    emits-change
+.PossibleValues                     property  ai        2 0 1                               emits-change
+.QueuedGpuValue                     property  i         -1                                  emits-change
+.ScalarIncrement                    property  i         -1                                  emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/ppt_pl1_spl
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE         FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                    -
+.Introspect                         method    -         s                    -
+org.freedesktop.DBus.Peer           interface -         -                    -
+.GetMachineId                       method    -         s                    -
+.Ping                               method    -         -                    -
+org.freedesktop.DBus.Properties     interface -         -                    -
+.Get                                method    ss        v                    -
+.GetAll                             method    s         a{sv}                -
+.Set                                method    ssv       -                    -
+.PropertiesChanged                  signal    sa{sv}as  -                    -
+xyz.ljones.AsusArmoury              interface -         -                    -
+.ApplyQueuedGpuValue                method    -         b                    -
+.RestoreDefault                     method    -         -                    -
+.AvailableAttrs                     property  as        1 "scalar_increment" emits-change
+.CurrentValue                       property  i         -                    emits-change writable
+.DefaultValue                       property  i         -1                   emits-change
+.MaxValue                           property  i         -1                   emits-change
+.MinValue                           property  i         -1                   emits-change
+.Name                               property  s         "PptPl1Spl"          emits-change
+.PossibleValues                     property  ai        0                    emits-change
+.QueuedGpuValue                     property  i         -1                   emits-change
+.ScalarIncrement                    property  i         1                    emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/ppt_pl2_sppt
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE         FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                    -
+.Introspect                         method    -         s                    -
+org.freedesktop.DBus.Peer           interface -         -                    -
+.GetMachineId                       method    -         s                    -
+.Ping                               method    -         -                    -
+org.freedesktop.DBus.Properties     interface -         -                    -
+.Get                                method    ss        v                    -
+.GetAll                             method    s         a{sv}                -
+.Set                                method    ssv       -                    -
+.PropertiesChanged                  signal    sa{sv}as  -                    -
+xyz.ljones.AsusArmoury              interface -         -                    -
+.ApplyQueuedGpuValue                method    -         b                    -
+.RestoreDefault                     method    -         -                    -
+.AvailableAttrs                     property  as        1 "scalar_increment" emits-change
+.CurrentValue                       property  i         -                    emits-change writable
+.DefaultValue                       property  i         -1                   emits-change
+.MaxValue                           property  i         -1                   emits-change
+.MinValue                           property  i         -1                   emits-change
+.Name                               property  s         "PptPl2Sppt"         emits-change
+.PossibleValues                     property  ai        0                    emits-change
+.QueuedGpuValue                     property  i         -1                   emits-change
+.ScalarIncrement                    property  i         1                    emits-change
+
+================================================================================
+SERVICE: xyz.ljones.Asusd  PATH: /xyz/ljones/asus_armoury/screen_auto_brightness
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE                        FLAGS
+org.freedesktop.DBus.Introspectable interface -         -                                   -
+.Introspect                         method    -         s                                   -
+org.freedesktop.DBus.Peer           interface -         -                                   -
+.GetMachineId                       method    -         s                                   -
+.Ping                               method    -         -                                   -
+org.freedesktop.DBus.Properties     interface -         -                                   -
+.Get                                method    ss        v                                   -
+.GetAll                             method    s         a{sv}                               -
+.Set                                method    ssv       -                                   -
+.PropertiesChanged                  signal    sa{sv}as  -                                   -
+xyz.ljones.AsusArmoury              interface -         -                                   -
+.ApplyQueuedGpuValue                method    -         b                                   -
+.RestoreDefault                     method    -         -                                   -
+.AvailableAttrs                     property  as        2 "possible_values" "current_value" emits-change
+.CurrentValue                       property  i         0                                   emits-change writable
+.DefaultValue                       property  i         -1                                  emits-change
+.MaxValue                           property  i         -1                                  emits-change
+.MinValue                           property  i         -1                                  emits-change
+.Name                               property  s         "ScreenAutoBrightness"              emits-change
+.PossibleValues                     property  ai        2 0 1                               emits-change
+.QueuedGpuValue                     property  i         -1                                  emits-change
+.ScalarIncrement                    property  i         -1                                  emits-change
+
+================================================================================
+SERVICE: org.supergfxctl.Daemon  PATH: /org/supergfxctl/Gfx
+================================================================================
+NAME                                TYPE      SIGNATURE RESULT/VALUE FLAGS
+org.freedesktop.DBus.Introspectable interface -         -            -
+.Introspect                         method    -         s            -
+org.freedesktop.DBus.Peer           interface -         -            -
+.GetMachineId                       method    -         s            -
+.Ping                               method    -         -            -
+org.freedesktop.DBus.Properties     interface -         -            -
+.Get                                method    ss        v            -
+.GetAll                             method    s         a{sv}        -
+.Set                                method    ssv       -            -
+.PropertiesChanged                  signal    sa{sv}as  -            -
+org.supergfxctl.Daemon              interface -         -            -
+.Config                             method    -         (ubbbbtu)    -
+.Mode                               method    -         u            -
+.PendingMode                        method    -         u            -
+.PendingUserAction                  method    -         u            -
+.Power                              method    -         u            -
+.SetConfig                          method    (ubbbbtu) -            -
+.SetMode                            method    u         u            -
+.Supported                          method    -         au           -
+.Vendor                             method    -         s            -
+.Version                            method    -         s            -
+.NotifyAction                       signal    u         -            -
+.NotifyGfx                          signal    u         -            -
+.NotifyGfxStatus                    signal    u         -            -
+
