@@ -27,6 +27,7 @@ struct MockState {
     gpu_pending_action: PendingUserAction,
     armoury_attributes: Vec<ArmouryAttribute>,
     sensors: SensorData,
+    volatile_rgb: Option<RgbColor>,
 }
 
 pub struct MockBackend {
@@ -184,6 +185,7 @@ impl MockBackend {
                 gpu_pending_action: PendingUserAction::Nothing,
                 armoury_attributes,
                 sensors,
+                volatile_rgb: None,
             }),
         }
     }
@@ -381,6 +383,12 @@ impl Backend for MockBackend {
     async fn set_aura_power(&self, power: &AuraPowerState) -> anyhow::Result<()> {
         let mut lock = self.state.lock().unwrap();
         lock.aura_power = *power;
+        Ok(())
+    }
+
+    async fn write_volatile_rgb(&self, color: RgbColor) -> anyhow::Result<()> {
+        let mut lock = self.state.lock().unwrap();
+        lock.volatile_rgb = Some(color);
         Ok(())
     }
 

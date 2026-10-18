@@ -415,12 +415,14 @@ async fn test_software_effects_and_color_logic() {
     app.apply_software_effect().await;
     let str_col2 = app.last_effect_color.expect("strobe color 2");
     assert_ne!(str_col1, str_col2, "Strobe must alternate between color and black");
+    assert_eq!(app.aura_data.color1, RgbColor::new(0, 255, 255), "Base primary color must NOT be overwritten by effect");
 
     // 9. Audio and Visual Effects (VoicePulse, AudioPulse, AudioWave, AmbientLight)
     app.active_software_effect = SoftwareEffect::VoicePulse;
     app.aura_data.color1 = RgbColor::new(200, 100, 50);
     app.apply_software_effect().await;
     assert!(app.last_effect_color.is_some(), "Voice pulse should produce a color");
+    assert_eq!(app.aura_data.color1, RgbColor::new(200, 100, 50), "Voice pulse must preserve base color1");
 
     app.active_software_effect = SoftwareEffect::AudioPulse;
     app.apply_software_effect().await;

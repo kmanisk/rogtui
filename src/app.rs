@@ -552,7 +552,7 @@ impl<B: Backend> AppState<B> {
         self.strobe_state = !self.strobe_state;
         if self.strobe_state {
             if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
-                RgbColor::new(255, 255, 255)
+                RgbColor::new(0, 255, 255)
             } else {
                 self.aura_data.color1
             }
@@ -566,7 +566,16 @@ impl<B: Backend> AppState<B> {
     pub fn sample_mic_level() -> u8 {
         use std::io::Read;
         let mut child = match std::process::Command::new("parec")
-            .args(["--channels=1", "--rate=8000", "--format=u8", "-d", "@DEFAULT_SOURCE@"])
+            .args([
+                "--raw",
+                "--latency-msec=20",
+                "--process-time-msec=20",
+                "--channels=1",
+                "--rate=8000",
+                "--format=u8",
+                "-d",
+                "@DEFAULT_SOURCE@",
+            ])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -604,7 +613,16 @@ impl<B: Backend> AppState<B> {
     pub fn sample_audio_out_level() -> u8 {
         use std::io::Read;
         let mut child = match std::process::Command::new("parec")
-            .args(["--channels=1", "--rate=8000", "--format=u8", "-d", "@DEFAULT_MONITOR@"])
+            .args([
+                "--raw",
+                "--latency-msec=20",
+                "--process-time-msec=20",
+                "--channels=1",
+                "--rate=8000",
+                "--format=u8",
+                "-d",
+                "@DEFAULT_MONITOR@",
+            ])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -660,7 +678,11 @@ impl<B: Backend> AppState<B> {
     pub fn compute_voice_pulse_color(&mut self) -> RgbColor {
         let level = Self::sample_mic_level();
         self.mic_level = level;
-        let c = self.aura_data.color1;
+        let c = if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
+            RgbColor::new(0, 255, 255)
+        } else {
+            self.aura_data.color1
+        };
         // Ambient room noise gate: <= 8% is resting silence
         if level <= 8 {
             RgbColor::new(
@@ -683,7 +705,11 @@ impl<B: Backend> AppState<B> {
     pub fn compute_audio_pulse_color(&mut self) -> RgbColor {
         let level = Self::sample_audio_out_level();
         self.audio_level = level;
-        let c = self.aura_data.color1;
+        let c = if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
+            RgbColor::new(0, 255, 255)
+        } else {
+            self.aura_data.color1
+        };
         if level <= 5 {
             RgbColor::new(
                 (c.r as f32 * 0.15) as u8,
@@ -732,7 +758,7 @@ impl<B: Backend> AppState<B> {
         }
     }
 
-    /// Apply the active software effect to the keyboard via asusd DBus.
+    /// Apply the active software effect to the keyboard via volatile EC write.
     /// No-op if brightness is Off (0) or effect is None.
     /// Only writes to hardware when the computed color changes (for telemetry effects)
     /// or on every tick for animated/audio effects.
@@ -769,7 +795,7 @@ impl<B: Backend> AppState<B> {
             SoftwareEffect::None => return,
         };
 
-        // Deduplicate telemetry effects: skip DBus write if color has not changed
+        // Deduplicate telemetry effects: skip write if color has not changed
         if !is_animated && self.last_effect_color == Some(color) {
             return;
         }
@@ -782,8 +808,8 @@ impl<B: Backend> AppState<B> {
             self.aura_data.mode = 0;
         }
 
-        self.aura_data.color1 = color;
-        let _ = self.backend.set_aura_mode_data(&self.aura_data).await;
+        // Write volatile frame color directly to hardware without mutating base color1
+        let _ = self.backend.write_volatile_rgb(color).await;
     }
 
     /// Toggle metrics logging to CSV file on/off.

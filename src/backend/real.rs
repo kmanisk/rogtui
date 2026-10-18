@@ -436,6 +436,52 @@ impl super::Backend for RealBackend {
         Ok(())
     }
 
+    async fn write_volatile_rgb(&self, color: RgbColor) -> anyhow::Result<()> {
+        const SYSFS_PATH: &str = "/sys/class/leds/asus::kbd_backlight/kbd_rgb_mode";
+        if std::path::Path::new(SYSFS_PATH).exists() {
+            let payload = format!("0 0 {} {} {} 1\n", color.r, color.g, color.b);
+            match std::fs::write(SYSFS_PATH, payload.as_bytes()) {
+                Ok(()) => return Ok(()),
+                Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                    let status = std::process::Command::new("sudo")
+                        .args(["-n", "tee", SYSFS_PATH])
+                        .stdin(std::process::Stdio::piped())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn()
+                        .and_then(|mut child| {
+                            if let Some(mut stdin) = child.stdin.take() {
+                                use std::io::Write;
+                                let _ = stdin.write_all(payload.as_bytes());
+                            }
+                            child.wait()
+                        });
+                    let _ = std::process::Command::new("sudo")
+                        .args(["-n", "chmod", "0666", SYSFS_PATH])
+                        .spawn();
+                    if let Ok(st) = status {
+                        if st.success() {
+                            return Ok(());
+                        }
+                    }
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        let raw: AuraModeRaw = (
+            0,
+            0,
+            (color.r, color.g, color.b),
+            (0, 0, 0),
+            "Med".to_string(),
+            "Right".to_string(),
+        );
+        let _ = self.aura.set_led_mode(0).await;
+        self.aura.set_led_mode_data(raw).await?;
+        Ok(())
+    }
+
     async fn get_gpu_mode(&self) -> anyhow::Result<GpuMode> {
         let raw = self.supergfx.mode().await?;
         Ok(GpuMode::from_u32(raw))

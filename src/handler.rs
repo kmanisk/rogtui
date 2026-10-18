@@ -176,7 +176,7 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                     app.aura_data.color1 = chosen;
                 }
                 if app.aura_mode == 0 {
-                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
                 }
                 app.show_color_picker_modal = false;
                 app.set_status(format!("Applied {} to Slot {}", chosen.to_hex(), app.picker_target_slot), false);
@@ -802,6 +802,11 @@ async fn toggle_custom_effect<B: Backend>(app: &mut AppState<B>, effect: Softwar
     if app.active_software_effect == effect {
         app.active_software_effect = SoftwareEffect::None;
         app.last_effect_color = None;
+        if app.aura_mode == 0 {
+            let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+        } else {
+            let _ = app.backend.set_aura_mode(app.aura_mode).await;
+        }
         app.set_status(format!("{} deactivated", effect.label()), false);
     } else {
         activate_software_mode(app, effect, &format!("{} active: {}", effect.label(), desc)).await;
@@ -841,6 +846,9 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 }
                 app.active_software_effect = SoftwareEffect::None;
                 app.last_effect_color = None;
+                let _ = app.backend.write_volatile_rgb(RgbColor::new(0, 0, 0)).await;
+            } else if app.active_software_effect == SoftwareEffect::None && app.aura_mode == 0 {
+                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
         }
         1 => {
@@ -872,7 +880,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                     app.aura_mode = 0;
                     app.aura_data.mode = 0;
                     let _ = app.backend.set_aura_mode(0).await;
-                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
                     app.set_status("Aura Mode: Static", false);
                 }
                 1 => {
@@ -923,7 +931,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
             app.aura_data.color1 = presets[next_pos];
             if app.aura_mode == 0 {
-                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
             let label = match next_pos {
                 0 => format!("Preset applied: {} ({})", theme_name, theme_col.to_hex()),
@@ -943,21 +951,21 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let r = (app.aura_data.color1.r as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.r = r;
             if app.aura_mode == 0 {
-                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
         }
         4 => {
             let g = (app.aura_data.color1.g as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.g = g;
             if app.aura_mode == 0 {
-                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
         }
         5 => {
             let b = (app.aura_data.color1.b as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.b = b;
             if app.aura_mode == 0 {
-                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
         }
         6 => {
