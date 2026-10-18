@@ -716,7 +716,9 @@ fn next_aura_field(current: usize, dir: i32, brightness: u32) -> usize {
         &[
             0, 1, 7, 8,                     // Panel 1: Brightness, Mode, Speed, Direction
             2, 3, 4, 5, 6,                  // Panel 2: Color 1, R, G, B, Color 2
-            13, 14, 15, 16, 17, 18, 19, 20, // Panel 3: Custom Effects (Animations 13-16, Telemetry 17-20)
+            13, 14, 15, 16,                 // Panel 3, Col 1: Animations
+            17, 18, 19, 20,                 // Panel 3, Col 2: Audio & Visual Sync
+            21, 22, 23, 24,                 // Panel 3, Col 3: Telemetry
             9, 10, 11, 12,                  // Panel 4: Hardware Power States
         ]
     };
@@ -736,10 +738,22 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             app.aura_selected_field = next_aura_field(app.aura_selected_field, -1, app.aura_brightness);
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            adjust_aura_field(app, -1).await;
+            if (17..=20).contains(&app.aura_selected_field) {
+                app.aura_selected_field -= 4; // Move from Col 2 to Col 1
+            } else if (21..=24).contains(&app.aura_selected_field) {
+                app.aura_selected_field -= 4; // Move from Col 3 to Col 2
+            } else {
+                adjust_aura_field(app, -1).await;
+            }
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            adjust_aura_field(app, 1).await;
+            if (13..=16).contains(&app.aura_selected_field) {
+                app.aura_selected_field += 4; // Move from Col 1 to Col 2
+            } else if (17..=20).contains(&app.aura_selected_field) {
+                app.aura_selected_field += 4; // Move from Col 2 to Col 3
+            } else {
+                adjust_aura_field(app, 1).await;
+            }
         }
         KeyCode::Char('c') => {
             if app.aura_brightness > 0 {
@@ -796,20 +810,23 @@ async fn toggle_custom_effect<B: Backend>(app: &mut AppState<B>, effect: Softwar
 
 async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
     // Guardrail: if brightness is Off (0), block all effect and color configuration
-    if app.aura_brightness == 0 && ((1..=8).contains(&app.aura_selected_field) || (13..=20).contains(&app.aura_selected_field)) {
+    if app.aura_brightness == 0 && ((1..=8).contains(&app.aura_selected_field) || (13..=24).contains(&app.aura_selected_field)) {
         app.set_status("Backlight is Off. Increase brightness to access effects.", true);
         return;
     }
 
+    let (theme_name, theme_col) = crate::ui::theme::Theme::get_system_theme_color();
     let presets = [
-        RgbColor::new(255, 255, 255), // White
-        RgbColor::new(255, 0, 0),     // Red
-        RgbColor::new(255, 128, 0),   // Orange
-        RgbColor::new(255, 255, 0),   // Yellow
-        RgbColor::new(0, 255, 0),     // Green
-        RgbColor::new(0, 255, 255),   // Cyan
-        RgbColor::new(0, 0, 255),     // Blue
-        RgbColor::new(255, 0, 255),   // Magenta
+        theme_col,                     // Dynamic System Theme
+        RgbColor::new(235, 219, 178),  // Gruvbox (#ebdbb2)
+        RgbColor::new(245, 194, 231),  // Catppuccin (#f5c2e7)
+        RgbColor::new(0, 255, 170),    // Cyberpunk (#00ffaa)
+        RgbColor::new(136, 192, 208),  // Nord (#88c0d0)
+        RgbColor::new(255, 122, 0),    // Sunset Amber (#ff7a00)
+        RgbColor::new(255, 0, 0),      // Red
+        RgbColor::new(0, 255, 0),      // Green
+        RgbColor::new(0, 136, 255),    // Blue
+        RgbColor::new(255, 255, 255),  // White
     ];
 
     match app.aura_selected_field {
@@ -819,7 +836,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let _ = app.backend.set_aura_brightness(b).await;
             if b == 0 {
                 // Brightness off: move focus back to brightness row and stop any software effect
-                if (1..=20).contains(&app.aura_selected_field) {
+                if (1..=24).contains(&app.aura_selected_field) {
                     app.aura_selected_field = 0;
                 }
                 app.active_software_effect = SoftwareEffect::None;
@@ -832,10 +849,14 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 SoftwareEffect::ColorCycle => 5,
                 SoftwareEffect::FireFlicker => 6,
                 SoftwareEffect::Strobe => 7,
-                SoftwareEffect::Heatmap => 8,
-                SoftwareEffect::GpuMode => 9,
-                SoftwareEffect::BatteryStatus => 10,
-                SoftwareEffect::CpuLoad => 11,
+                SoftwareEffect::VoicePulse => 8,
+                SoftwareEffect::AudioPulse => 9,
+                SoftwareEffect::AudioWave => 10,
+                SoftwareEffect::AmbientLight => 11,
+                SoftwareEffect::Heatmap => 12,
+                SoftwareEffect::GpuMode => 13,
+                SoftwareEffect::BatteryStatus => 14,
+                SoftwareEffect::CpuLoad => 15,
                 SoftwareEffect::None => match app.aura_mode {
                     1 => 1,
                     2 => 2,
@@ -843,7 +864,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                     _ => 0,
                 },
             };
-            let next_idx = ((current_idx + dir + 12) % 12) as usize;
+            let next_idx = ((current_idx + dir + 16) % 16) as usize;
             match next_idx {
                 0 => {
                     app.active_software_effect = SoftwareEffect::None;
@@ -885,10 +906,14 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 5 => activate_software_mode(app, SoftwareEffect::ColorCycle, "Color Cycle active (7 primary colors)").await,
                 6 => activate_software_mode(app, SoftwareEffect::FireFlicker, "Fire Flicker active (fireplace embers)").await,
                 7 => activate_software_mode(app, SoftwareEffect::Strobe, "Strobe / Flash active (pulsing pulse)").await,
-                8 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
-                9 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
-                10 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
-                11 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
+                8 => activate_software_mode(app, SoftwareEffect::VoicePulse, "Voice Pulse active (speech reactive via clean mic)").await,
+                9 => activate_software_mode(app, SoftwareEffect::AudioPulse, "Audio Pulse active (speaker output reactive)").await,
+                10 => activate_software_mode(app, SoftwareEffect::AudioWave, "Audio Wave active (frequency spectrum EQ)").await,
+                11 => activate_software_mode(app, SoftwareEffect::AmbientLight, "Ambient Light active (Wayland screen sync)").await,
+                12 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
+                13 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
+                14 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
+                15 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
                 _ => {}
             }
         }
@@ -900,6 +925,19 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             if app.aura_mode == 0 {
                 let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
             }
+            let label = match next_pos {
+                0 => format!("Preset applied: {} ({})", theme_name, theme_col.to_hex()),
+                1 => "Preset applied: Gruvbox (#EBDBB2)".to_string(),
+                2 => "Preset applied: Catppuccin (#F5C2E7)".to_string(),
+                3 => "Preset applied: Cyberpunk (#00FFAA)".to_string(),
+                4 => "Preset applied: Nord (#88C0D0)".to_string(),
+                5 => "Preset applied: Sunset Amber (#FF7A00)".to_string(),
+                6 => "Preset applied: Red (#FF0000)".to_string(),
+                7 => "Preset applied: Green (#00FF00)".to_string(),
+                8 => "Preset applied: Blue (#0088FF)".to_string(),
+                _ => "Preset applied: White (#FFFFFF)".to_string(),
+            };
+            app.set_status(label, false);
         }
         3 => {
             let r = (app.aura_data.color1.r as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
@@ -961,10 +999,14 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         14 => toggle_custom_effect(app, SoftwareEffect::ColorCycle, "7 primary colors").await,
         15 => toggle_custom_effect(app, SoftwareEffect::FireFlicker, "fireplace embers").await,
         16 => toggle_custom_effect(app, SoftwareEffect::Strobe, "pulsing pulse").await,
-        17 => toggle_custom_effect(app, SoftwareEffect::Heatmap, "CPU/GPU temp -> color").await,
-        18 => toggle_custom_effect(app, SoftwareEffect::GpuMode, "GPU mode -> color").await,
-        19 => toggle_custom_effect(app, SoftwareEffect::BatteryStatus, "charge state -> color").await,
-        20 => toggle_custom_effect(app, SoftwareEffect::CpuLoad, "load % -> color").await,
+        17 => toggle_custom_effect(app, SoftwareEffect::VoicePulse, "speech reactive via clean mic").await,
+        18 => toggle_custom_effect(app, SoftwareEffect::AudioPulse, "sound output reactive").await,
+        19 => toggle_custom_effect(app, SoftwareEffect::AudioWave, "frequency spectrum EQ").await,
+        20 => toggle_custom_effect(app, SoftwareEffect::AmbientLight, "Wayland screen ambient sync").await,
+        21 => toggle_custom_effect(app, SoftwareEffect::Heatmap, "CPU/GPU temp -> color").await,
+        22 => toggle_custom_effect(app, SoftwareEffect::GpuMode, "GPU mode -> color").await,
+        23 => toggle_custom_effect(app, SoftwareEffect::BatteryStatus, "charge state -> color").await,
+        24 => toggle_custom_effect(app, SoftwareEffect::CpuLoad, "load % -> color").await,
         _ => {}
     }
 }

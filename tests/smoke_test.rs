@@ -416,7 +416,30 @@ async fn test_software_effects_and_color_logic() {
     let str_col2 = app.last_effect_color.expect("strobe color 2");
     assert_ne!(str_col1, str_col2, "Strobe must alternate between color and black");
 
-    // 9. Brightness 0 guardrail -> silences all effects
+    // 9. Audio and Visual Effects (VoicePulse, AudioPulse, AudioWave, AmbientLight)
+    app.active_software_effect = SoftwareEffect::VoicePulse;
+    app.aura_data.color1 = RgbColor::new(200, 100, 50);
+    app.apply_software_effect().await;
+    assert!(app.last_effect_color.is_some(), "Voice pulse should produce a color");
+
+    app.active_software_effect = SoftwareEffect::AudioPulse;
+    app.apply_software_effect().await;
+    assert!(app.last_effect_color.is_some(), "Audio pulse should produce a color");
+
+    app.active_software_effect = SoftwareEffect::AudioWave;
+    app.apply_software_effect().await;
+    assert!(app.last_effect_color.is_some(), "Audio wave should produce a color");
+
+    app.active_software_effect = SoftwareEffect::AmbientLight;
+    app.apply_software_effect().await;
+    assert!(app.last_effect_color.is_some(), "Ambient light should produce a color");
+
+    // 10. System theme detection
+    let (theme_name, theme_col) = rogtui::ui::theme::Theme::get_system_theme_color();
+    assert!(!theme_name.is_empty(), "Theme name should not be empty");
+    assert!(theme_col.r > 0 || theme_col.g > 0 || theme_col.b > 0, "Theme color should be non-black");
+
+    // 11. Brightness 0 guardrail -> silences all effects
     app.aura_brightness = 0;
     app.last_effect_color = None;
     app.apply_software_effect().await;

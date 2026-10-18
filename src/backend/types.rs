@@ -12,6 +12,11 @@ pub enum SoftwareEffect {
     ColorCycle,
     FireFlicker,
     Strobe,
+    // Audio & Visual Effects
+    VoicePulse,
+    AudioPulse,
+    AudioWave,
+    AmbientLight,
     // System Telemetry
     Heatmap,
     GpuMode,
@@ -26,6 +31,10 @@ impl SoftwareEffect {
             SoftwareEffect::ColorCycle,
             SoftwareEffect::FireFlicker,
             SoftwareEffect::Strobe,
+            SoftwareEffect::VoicePulse,
+            SoftwareEffect::AudioPulse,
+            SoftwareEffect::AudioWave,
+            SoftwareEffect::AmbientLight,
             SoftwareEffect::Heatmap,
             SoftwareEffect::GpuMode,
             SoftwareEffect::BatteryStatus,
@@ -40,7 +49,29 @@ impl SoftwareEffect {
                 | SoftwareEffect::ColorCycle
                 | SoftwareEffect::FireFlicker
                 | SoftwareEffect::Strobe
+                | SoftwareEffect::VoicePulse
+                | SoftwareEffect::AudioPulse
+                | SoftwareEffect::AudioWave
+                | SoftwareEffect::AmbientLight
         )
+    }
+
+    pub fn category(self) -> &'static str {
+        match self {
+            SoftwareEffect::None => "None",
+            SoftwareEffect::RainbowWave
+            | SoftwareEffect::ColorCycle
+            | SoftwareEffect::FireFlicker
+            | SoftwareEffect::Strobe => "Custom Animation",
+            SoftwareEffect::VoicePulse
+            | SoftwareEffect::AudioPulse
+            | SoftwareEffect::AudioWave
+            | SoftwareEffect::AmbientLight => "Audio & Visual Sync",
+            SoftwareEffect::Heatmap
+            | SoftwareEffect::GpuMode
+            | SoftwareEffect::BatteryStatus
+            | SoftwareEffect::CpuLoad => "System Telemetry",
+        }
     }
 
     pub fn label(self) -> &'static str {
@@ -50,6 +81,10 @@ impl SoftwareEffect {
             SoftwareEffect::ColorCycle => "Color Cycle",
             SoftwareEffect::FireFlicker => "Fire Flicker",
             SoftwareEffect::Strobe => "Strobe / Flash",
+            SoftwareEffect::VoicePulse => "Voice Pulse (Mic)",
+            SoftwareEffect::AudioPulse => "Audio Pulse",
+            SoftwareEffect::AudioWave => "Audio Wave (Spectrum)",
+            SoftwareEffect::AmbientLight => "Ambient (Wayland)",
             SoftwareEffect::Heatmap => "Heatmap",
             SoftwareEffect::GpuMode => "GPU Mode Indicator",
             SoftwareEffect::BatteryStatus => "Battery Status",
@@ -73,6 +108,22 @@ impl SoftwareEffect {
             }
             SoftwareEffect::Strobe => {
                 "High-contrast blinking pulse between Primary Color and black."
+            }
+            SoftwareEffect::VoicePulse => {
+                "Microphone voice-reactive illumination. G-Helper style speech sync using\n\
+                 the clean microphone (ghelper-audio) - lights up when speaking, rests when silent."
+            }
+            SoftwareEffect::AudioPulse => {
+                "Sound output reactive visualizer. Pulses keyboard illumination to music\n\
+                 beat drops and audio playback volume across speakers and headphones."
+            }
+            SoftwareEffect::AudioWave => {
+                "Dynamic audio spectrum equalizer. Shifts keyboard color hue and intensity\n\
+                 across the frequency and amplitude spectrum from deep blue to peak red."
+            }
+            SoftwareEffect::AmbientLight => {
+                "Real-time screen ambient sync on Wayland. Samples the display compositor via\n\
+                 grim to continuously mirror movie, video, or game visuals on the keyboard."
             }
             SoftwareEffect::Heatmap => {
                 "Maps CPU/GPU temperature to keyboard color.\n\

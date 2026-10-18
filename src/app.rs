@@ -149,6 +149,9 @@ pub struct AppState<B: Backend> {
     pub color_cycle_idx: usize,
     pub strobe_state: bool,
     pub flicker_seed: u32,
+    pub mic_level: u8,
+    pub audio_level: u8,
+    pub last_ambient_color: Option<RgbColor>,
 
     // Armoury Attributes State
     pub armoury_attributes: Vec<ArmouryAttribute>,
@@ -279,6 +282,9 @@ impl<B: Backend> AppState<B> {
             color_cycle_idx: 0,
             strobe_state: false,
             flicker_seed: 1234567,
+            mic_level: 0,
+            audio_level: 0,
+            last_ambient_color: None,
             armoury_attributes,
             armoury_selected_idx: 0,
             show_unavailable_armoury: false,
@@ -555,10 +561,181 @@ impl<B: Backend> AppState<B> {
         }
     }
 
+    /// Sample a 100ms slice of microphone input audio via parec from @DEFAULT_SOURCE@
+    /// (corresponds to clean ghelper-audio / built-in microphone).
+    pub fn sample_mic_level() -> u8 {
+        use std::io::Read;
+        let mut child = match std::process::Command::new("parec")
+            .args(["--channels=1", "--rate=8000", "--format=u8", "-d", "@DEFAULT_SOURCE@"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+
+        let mut buf = [128u8; 800];
+        let mut bytes_read = 0;
+        if let Some(mut stdout) = child.stdout.take() {
+            while bytes_read < 800 {
+                match stdout.read(&mut buf[bytes_read..]) {
+                    Ok(0) => break,
+                    Ok(n) => bytes_read += n,
+                    Err(_) => break,
+                }
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+
+        if bytes_read == 0 {
+            return 0;
+        }
+        let peak = buf[..bytes_read]
+            .iter()
+            .map(|&b| (b as i16 - 128).abs())
+            .max()
+            .unwrap_or(0);
+        ((peak as u32 * 100) / 127).min(100) as u8
+    }
+
+    /// Sample a 100ms slice of audio playback output via parec from @DEFAULT_MONITOR@.
+    pub fn sample_audio_out_level() -> u8 {
+        use std::io::Read;
+        let mut child = match std::process::Command::new("parec")
+            .args(["--channels=1", "--rate=8000", "--format=u8", "-d", "@DEFAULT_MONITOR@"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return 0,
+        };
+
+        let mut buf = [128u8; 800];
+        let mut bytes_read = 0;
+        if let Some(mut stdout) = child.stdout.take() {
+            while bytes_read < 800 {
+                match stdout.read(&mut buf[bytes_read..]) {
+                    Ok(0) => break,
+                    Ok(n) => bytes_read += n,
+                    Err(_) => break,
+                }
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+
+        if bytes_read == 0 {
+            return 0;
+        }
+        let peak = buf[..bytes_read]
+            .iter()
+            .map(|&b| (b as i16 - 128).abs())
+            .max()
+            .unwrap_or(0);
+        ((peak as u32 * 100) / 127).min(100) as u8
+    }
+
+    /// Sample real-time center pixel of the active Wayland screen via grim.
+    pub fn sample_wayland_screen_color() -> Option<RgbColor> {
+        let output = std::process::Command::new("grim")
+            .args(["-g", "960,600 1x1", "-t", "ppm", "-"])
+            .output()
+            .ok()?;
+        if output.status.success() && output.stdout.len() >= 3 {
+            let len = output.stdout.len();
+            let r = output.stdout[len - 3];
+            let g = output.stdout[len - 2];
+            let b = output.stdout[len - 1];
+            Some(RgbColor::new(r, g, b))
+        } else {
+            None
+        }
+    }
+
+    /// Voice Pulse: Speech reactive using clean microphone (ghelper-audio).
+    /// G-Helper style mic sync: lights up brightly when speaking, rests when silent.
+    pub fn compute_voice_pulse_color(&mut self) -> RgbColor {
+        let level = Self::sample_mic_level();
+        self.mic_level = level;
+        let c = self.aura_data.color1;
+        // Ambient room noise gate: <= 8% is resting silence
+        if level <= 8 {
+            RgbColor::new(
+                (c.r as f32 * 0.15) as u8,
+                (c.g as f32 * 0.15) as u8,
+                (c.b as f32 * 0.15) as u8,
+            )
+        } else {
+            let mult = 0.20 + 0.80 * ((level - 8) as f32 / 92.0);
+            RgbColor::new(
+                (c.r as f32 * mult).min(255.0) as u8,
+                (c.g as f32 * mult).min(255.0) as u8,
+                (c.b as f32 * mult).min(255.0) as u8,
+            )
+        }
+    }
+
+    /// Audio Pulse: Sound output reactive visualizer.
+    /// Pulses keyboard illumination with music beat drops and audio volume.
+    pub fn compute_audio_pulse_color(&mut self) -> RgbColor {
+        let level = Self::sample_audio_out_level();
+        self.audio_level = level;
+        let c = self.aura_data.color1;
+        if level <= 5 {
+            RgbColor::new(
+                (c.r as f32 * 0.15) as u8,
+                (c.g as f32 * 0.15) as u8,
+                (c.b as f32 * 0.15) as u8,
+            )
+        } else {
+            let mult = 0.20 + 0.80 * (level as f32 / 100.0);
+            RgbColor::new(
+                (c.r as f32 * mult).min(255.0) as u8,
+                (c.g as f32 * mult).min(255.0) as u8,
+                (c.b as f32 * mult).min(255.0) as u8,
+            )
+        }
+    }
+
+    /// Audio Wave: Dynamic audio spectrum EQ.
+    /// Shifts hue across the color spectrum based on playback intensity.
+    pub fn compute_audio_wave_color(&mut self) -> RgbColor {
+        let level = Self::sample_audio_out_level();
+        self.audio_level = level;
+        let hue = if level < 15 {
+            240.0 // Calm deep blue
+        } else if level < 40 {
+            180.0 // Cyan / teal
+        } else if level < 70 {
+            100.0 // Lime green / yellow
+        } else if level < 85 {
+            40.0  // Warm orange
+        } else {
+            0.0   // Peak red
+        };
+        let val = 30.0 + 70.0 * (level as f32 / 100.0);
+        RgbColor::from_hsv(hue, 100.0, val)
+    }
+
+    /// Ambient Light: Real-time screen ambient sync on Wayland.
+    pub fn compute_ambient_color(&mut self) -> RgbColor {
+        if let Some(col) = Self::sample_wayland_screen_color() {
+            self.last_ambient_color = Some(col);
+            col
+        } else if let Some(last) = self.last_ambient_color {
+            last
+        } else {
+            self.aura_data.color1
+        }
+    }
+
     /// Apply the active software effect to the keyboard via asusd DBus.
     /// No-op if brightness is Off (0) or effect is None.
     /// Only writes to hardware when the computed color changes (for telemetry effects)
-    /// or on every tick for animated effects.
+    /// or on every tick for animated/audio effects.
     pub async fn apply_software_effect(&mut self) {
         if self.aura_brightness == 0 || self.active_software_effect == SoftwareEffect::None {
             return;
@@ -570,6 +747,10 @@ impl<B: Backend> AppState<B> {
             SoftwareEffect::ColorCycle => self.compute_color_cycle_color(),
             SoftwareEffect::FireFlicker => self.compute_fire_flicker_color(),
             SoftwareEffect::Strobe => self.compute_strobe_color(),
+            SoftwareEffect::VoicePulse => self.compute_voice_pulse_color(),
+            SoftwareEffect::AudioPulse => self.compute_audio_pulse_color(),
+            SoftwareEffect::AudioWave => self.compute_audio_wave_color(),
+            SoftwareEffect::AmbientLight => self.compute_ambient_color(),
             SoftwareEffect::Heatmap => {
                 Self::compute_heatmap_color(self.sensors.cpu_temp_c, self.sensors.gpu_temp_c)
             }
