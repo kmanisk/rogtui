@@ -532,13 +532,26 @@ async fn apply_fancurves<B: Backend>(app: &mut AppState<B>) {
     }
 }
 
+fn next_aura_field(current: usize, dir: i32, brightness: u32) -> usize {
+    let accessible: &[usize] = if brightness == 0 {
+        &[0, 9, 10, 11, 12]
+    } else {
+        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    };
+
+    let cur_pos = accessible.iter().position(|&f| f == current).unwrap_or(0);
+    let count = accessible.len() as i32;
+    let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
+    accessible[next_pos]
+}
+
 async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
-            app.aura_selected_field = (app.aura_selected_field + 1) % 13;
+            app.aura_selected_field = next_aura_field(app.aura_selected_field, 1, app.aura_brightness);
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            app.aura_selected_field = (app.aura_selected_field + 12) % 13;
+            app.aura_selected_field = next_aura_field(app.aura_selected_field, -1, app.aura_brightness);
         }
         KeyCode::Left | KeyCode::Char('h') => {
             adjust_aura_field(app, -1).await;
@@ -550,6 +563,12 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             adjust_aura_field(app, 1).await;
         }
         KeyCode::Char('w') => {
+            if app.aura_brightness == 0 {
+                let _ = app.backend.set_aura_brightness(0).await;
+                let _ = app.backend.set_aura_power(&app.aura_power).await;
+                app.set_status("Backlight is Off (power states saved)", false);
+                return;
+            }
             if let Err(e) = app.backend.set_aura_mode_data(&app.aura_data).await {
                 app.set_status(format!("Error applying aura: {e}"), true);
             } else {
@@ -563,6 +582,12 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
 }
 
 async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
+    // Guardrail: if brightness is Off (0), block all effect and color configuration
+    if app.aura_brightness == 0 && (1..=8).contains(&app.aura_selected_field) {
+        app.set_status("Backlight is Off. Increase brightness to access effects.", true);
+        return;
+    }
+
     let presets = [
         RgbColor::new(255, 255, 255), // White
         RgbColor::new(255, 0, 0),     // Red
@@ -579,6 +604,9 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let b = (app.aura_brightness as i32 + dir).clamp(0, 3) as u32;
             app.aura_brightness = b;
             let _ = app.backend.set_aura_brightness(b).await;
+            if b == 0 && (1..=8).contains(&app.aura_selected_field) {
+                app.aura_selected_field = 0;
+            }
         }
         1 => {
             let modes = [0, 1, 2, 10];

@@ -131,18 +131,35 @@ fn render_footer<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             Span::styled("t", Style::default().fg(Color::DarkGray)),
             Span::raw(" tbl"),
         ],
-        ActiveTab::Aura => vec![
-            Span::styled("j/k", Style::default().fg(Color::DarkGray)),
-            Span::raw(" select  "),
-            Span::styled("h/l", Style::default().fg(Color::DarkGray)),
-            Span::raw(" adjust  "),
-            Span::styled("w", Style::default().fg(Color::DarkGray)),
-            Span::raw(" apply  "),
-            Span::styled("?", Style::default().fg(Color::DarkGray)),
-            Span::raw(" help  "),
-            Span::styled("q", Style::default().fg(Color::DarkGray)),
-            Span::raw(" quit"),
-        ],
+        ActiveTab::Aura => {
+            if app.aura_brightness == 0 {
+                vec![
+                    Span::styled("h/l", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" brightness (Off)  "),
+                    Span::styled("j/k", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" select  "),
+                    Span::styled("w", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" save  "),
+                    Span::styled("?", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" help  "),
+                    Span::styled("q", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" quit"),
+                ]
+            } else {
+                vec![
+                    Span::styled("j/k", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" select  "),
+                    Span::styled("h/l", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" adjust  "),
+                    Span::styled("w", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" apply  "),
+                    Span::styled("?", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" help  "),
+                    Span::styled("q", Style::default().fg(Color::DarkGray)),
+                    Span::raw(" quit"),
+                ]
+            }
+        }
         ActiveTab::Gpu => vec![
             Span::styled("j/k", Style::default().fg(Color::DarkGray)),
             Span::raw(" select mode  "),
