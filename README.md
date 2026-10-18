@@ -112,14 +112,18 @@ makepkg -si
 | Key | Context | Description |
 | :--- | :--- | :--- |
 | `Tab` / `Shift+Tab` | Global | Cycle to next / previous tab |
-| `1` .. `6` | Global | Direct jump to tab |
+| `1` .. `7` | Global | Direct jump to tab |
 | `j` / `k` or `Up` / `Down` | List Views | Move selection up / down |
-| `h` / `l` or `Left` / `Right` | Controls | Decrease / increase value or toggle |
-| `Enter` / `Space` | Controls | Execute action, confirm, or cycle |
+| `h` / `l` or `Left` / `Right` | Controls | Decrease / increase value, toggle, or navigate effect columns |
+| `Enter` / `Space` | Controls | Execute action, confirm, cycle, or open color picker |
+| `c` | Aura | Open interactive 24-bit RGB/HSV color picker modal |
 | `p` | Global | Quick cycle active Platform Profile |
-| `w` | Fan / Aura | Apply and write staged configuration to DBus |
+| `l` | Dashboard | Toggle real-time telemetry metrics logging to CSV |
+| `A` | Dashboard | Open Advanced Power Limits modal (SPL, sPPT, TGP) |
+| `w` | Fan / Aura | Apply and write staged configuration to hardware / BIOS |
 | `r` | Fan / Armoury | Restore factory default settings |
 | `u` | Fan | Undo / revert to last-known-good curve |
+| `y` | About | Export full system diagnostics report to `~/rogtui-diagnostics.txt` |
 | `?` | Global | Open / close keyboard shortcuts help overlay |
 | `q` / `Esc` | Global | Close overlay / cancel confirmation / exit |
 
@@ -150,5 +154,8 @@ rogtui --mock
 
 ## Documentation
 
+- [`docs/asusctl-architecture-and-effects.md`](docs/asusctl-architecture-and-effects.md): Complete ASUS hardware architecture, kernel WMI sysfs ABI, DBus endpoints, and performance overhead metrics.
+- [`docs/parity.md`](docs/parity.md): Full feature parity matrix comparing `rogtui` with ROG Control Center (`rog-control-center`).
+- [`docs/keyboard-probe.md`](docs/keyboard-probe.md): Hardware verification and interactive probe results for TUF keyboard LED modes.
 - [`docs/endpoints.md`](docs/endpoints.md): Complete mapping of all discovered DBus properties, methods, and sysfs paths to their UI counterparts.
 - [`docs/dbus-introspection.txt`](docs/dbus-introspection.txt): Introspection dump of `xyz.ljones.Asusd` and `org.supergfxctl.Daemon`.
