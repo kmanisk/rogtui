@@ -1,6 +1,4 @@
 use std::fs;
-use std::path::Path;
-use std::process::Command;
 use zbus::proxy;
 
 use crate::backend::types::{
@@ -207,6 +205,7 @@ pub struct RealBackend {
     supergfx: SuperGfxProxy<'static>,
     armoury_nodes: Vec<String>,
     cpu_prev_stat: std::sync::Mutex<Option<(u64, u64)>>,
+    nvml: crate::backend::nvml::NvmlReader,
 }
 
 impl RealBackend {
@@ -231,6 +230,8 @@ impl RealBackend {
             "ppt_pl2_sppt".to_string(),
         ];
 
+        let nvml = crate::backend::nvml::NvmlReader::new();
+
         Ok(Self {
             conn,
             platform,
@@ -239,6 +240,7 @@ impl RealBackend {
             supergfx,
             armoury_nodes,
             cpu_prev_stat: std::sync::Mutex::new(None),
+            nvml,
         })
     }
 
@@ -711,24 +713,18 @@ impl super::Backend for RealBackend {
 
                         if status_clean == "active" {
                             // Discrete GPU is active: safe to read without waking D3cold
-                            if Path::new("/proc/driver/nvidia").exists() {
-                                if let Ok(out) = Command::new("nvidia-smi")
-                                    .args(["--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"])
-                                    .output()
-                                {
-                                    if out.status.success() {
-                                        let s = String::from_utf8_lossy(&out.stdout);
-                                        if let Ok(t) = s.trim().parse::<u32>() {
-                                            sensors.gpu_temp_c = Some(t);
-                                            sensors.dgpu_status = format!("Active ({t} C)");
-                                        } else {
-                                            sensors.dgpu_status = "Active".to_string();
-                                        }
-                                    }
+                            let (gpu_temp, gpu_util) = self.nvml.query_gpu_metrics();
+                            sensors.gpu_temp_c = gpu_temp;
+                            match (gpu_temp, gpu_util) {
+                                (Some(t), Some(u)) => {
+                                    sensors.dgpu_status = format!("Active ({t} C, {u}% util)");
                                 }
-                            }
-                            if sensors.dgpu_status.is_empty() {
-                                sensors.dgpu_status = "Active".to_string();
+                                (Some(t), None) => {
+                                    sensors.dgpu_status = format!("Active ({t} C)");
+                                }
+                                _ => {
+                                    sensors.dgpu_status = "Active (n/a)".to_string();
+                                }
                             }
                         } else if status_clean == "suspended" {
                             // Discrete GPU is in low-power D3cold: DO NOT wake it

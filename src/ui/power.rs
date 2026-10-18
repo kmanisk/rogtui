@@ -141,11 +141,14 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             } else {
                 "0.0 W (AC Wall Power)".to_string()
             };
-            let bat_cycles = app.sensors.battery_cycle_count.unwrap_or(0);
+            let bat_cycles_str = match app.sensors.battery_cycle_count {
+                Some(c) if c > 0 => format!("{c} cycles"),
+                _ => "n/a".to_string(),
+            };
 
             lines.push(Line::from(vec![
                 Span::styled("    Battery Health   : ", Style::default().fg(theme.dim)),
-                Span::styled(format!("{bat_health}% (90 Wh Li-ion, {bat_cycles} cycles)"), Style::default().fg(theme.ok)),
+                Span::styled(format!("{bat_health}% (90 Wh Li-ion, cycles: {bat_cycles_str})"), Style::default().fg(theme.ok)),
             ]));
             lines.push(Line::from(vec![
                 Span::styled("    State & Draw     : ", Style::default().fg(theme.dim)),

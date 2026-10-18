@@ -413,6 +413,51 @@ impl RgbColor {
         let b = u8::from_str_radix(&cleaned[4..6], 16).map_err(|_| "Invalid hex characters for Blue")?;
         Ok(Self { r, g, b })
     }
+
+    pub fn to_hsv(&self) -> (f32, f32, f32) {
+        let rf = self.r as f32 / 255.0;
+        let gf = self.g as f32 / 255.0;
+        let bf = self.b as f32 / 255.0;
+        let max = rf.max(gf).max(bf);
+        let min = rf.min(gf).min(bf);
+        let delta = max - min;
+
+        let v = max * 100.0;
+        let s = if max == 0.0 { 0.0 } else { (delta / max) * 100.0 };
+        let h = if delta == 0.0 {
+            0.0
+        } else if (max - rf).abs() < f32::EPSILON {
+            60.0 * (((gf - bf) / delta) % 6.0)
+        } else if (max - gf).abs() < f32::EPSILON {
+            60.0 * (((bf - rf) / delta) + 2.0)
+        } else {
+            60.0 * (((rf - gf) / delta) + 4.0)
+        };
+        let h = (h + 360.0) % 360.0;
+        (h, s, v)
+    }
+
+    pub fn from_hsv(h: f32, s: f32, v: f32) -> Self {
+        let s_norm = (s / 100.0).clamp(0.0, 1.0);
+        let v_norm = (v / 100.0).clamp(0.0, 1.0);
+        let h_norm = (h % 360.0 + 360.0) % 360.0;
+        let c = v_norm * s_norm;
+        let x = c * (1.0 - ((h_norm / 60.0) % 2.0 - 1.0).abs());
+        let m = v_norm - c;
+        let (r_prime, g_prime, b_prime) = match (h_norm / 60.0) as i32 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        Self {
+            r: ((r_prime + m) * 255.0).round().clamp(0.0, 255.0) as u8,
+            g: ((g_prime + m) * 255.0).round().clamp(0.0, 255.0) as u8,
+            b: ((b_prime + m) * 255.0).round().clamp(0.0, 255.0) as u8,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

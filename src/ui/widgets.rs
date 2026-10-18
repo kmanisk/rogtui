@@ -88,54 +88,66 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, active_tab: ActiveTab, theme: &
 }
 
 pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
-    let keybinds: Vec<(&str, &str)> = match app.current_tab {
-        ActiveTab::Dashboard => vec![
-            ("tab", "switch"),
-            ("p", "cycle profile"),
-            ("a", "power limits"),
-            ("o", "overdrive"),
-            ("b", "auto-bright"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
-        ActiveTab::Power => vec![
-            ("j/k", "select"),
+    let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
+        vec![
+            ("j/k", "slider"),
             ("h/l", "adjust"),
-            ("enter", "toggle"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
-        ActiveTab::FanCurves => vec![
-            ("h/l", "pt"),
-            ("j/k", "%"),
-            ("H/L", "C"),
-            ("w", "apply"),
-            ("x", "repair"),
-            ("s", "preset"),
-            ("f", "fan"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
-        ActiveTab::Aura => {
-            if app.aura_brightness == 0 {
-                vec![
-                    ("h/l", "brightness (Off)"),
-                    ("j/k", "select"),
-                    ("w", "save"),
-                    ("?", "help"),
-                    ("q", "quit"),
-                ]
-            } else {
-                vec![
-                    ("j/k", "select"),
-                    ("h/l", "adjust"),
-                    ("enter", "input"),
-                    ("w", "apply"),
-                    ("?", "help"),
-                    ("q", "quit"),
-                ]
+            ("enter", "apply"),
+            ("esc", "cancel"),
+        ]
+    } else if app.show_advanced_power_modal {
+        vec![
+            ("esc/enter", "close"),
+        ]
+    } else {
+        match app.current_tab {
+            ActiveTab::Dashboard => vec![
+                ("tab", "switch"),
+                ("p", "cycle profile"),
+                ("a", "power limits"),
+                ("o", "overdrive"),
+                ("b", "auto-bright"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            ActiveTab::Power => vec![
+                ("j/k", "select"),
+                ("h/l", "adjust"),
+                ("enter", "toggle"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            ActiveTab::FanCurves => vec![
+                ("h/l", "pt"),
+                ("j/k", "%"),
+                ("H/L", "C"),
+                ("w", "apply"),
+                ("x", "repair"),
+                ("s", "preset"),
+                ("f", "fan"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            ActiveTab::Aura => {
+                if app.aura_brightness == 0 {
+                    vec![
+                        ("h/l", "brightness (Off)"),
+                        ("j/k", "select"),
+                        ("w", "save"),
+                        ("?", "help"),
+                        ("q", "quit"),
+                    ]
+                } else {
+                    vec![
+                        ("j/k", "select"),
+                        ("h/l", "adjust"),
+                        ("c/enter", "picker"),
+                        ("w", "apply"),
+                        ("?", "help"),
+                        ("q", "quit"),
+                    ]
+                }
             }
-        }
         ActiveTab::Gpu => vec![
             ("j/k", "select mode"),
             ("enter", "switch"),
@@ -157,6 +169,7 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
             ("?", "help"),
             ("q", "quit"),
         ],
+        }
     };
 
     let mut spans = Vec::new();
@@ -379,8 +392,8 @@ pub fn render_help_overlay(f: &mut Frame, area: Rect, current_tab: ActiveTab, th
                 Span::raw("Adjust brightness, mode, color channel, or preset"),
             ]));
             help_lines.push(Line::from(vec![
-                Span::styled("  Enter            : ", Style::default().fg(theme.warn)),
-                Span::raw("Toggle power state / edit hex color"),
+                Span::styled("  c / Enter        : ", Style::default().fg(theme.warn)),
+                Span::raw("Open 24-bit RGB/HSV Color Picker modal (live keyboard preview)"),
             ]));
             help_lines.push(Line::from(vec![
                 Span::styled("  w                : ", Style::default().fg(theme.warn)),

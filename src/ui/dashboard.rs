@@ -236,6 +236,10 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
     } else {
         "AC Power".to_string()
     };
+    let bat_cycles_str = match app.sensors.battery_cycle_count {
+        Some(c) if c > 0 => format!("{c}"),
+        _ => "n/a".to_string(),
+    };
 
     let overdrive_active = app.sensors.panel_overdrive.unwrap_or(true);
     let auto_bright_active = app.sensors.screen_auto_brightness.unwrap_or(false);
@@ -289,7 +293,7 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         ),
         Line::from(vec![
             Span::styled("  Battery Telemetry: ", Style::default().fg(theme.dim)),
-            Span::styled(format!("{bat_status} | Health: {bat_health}% | Draw: {bat_power_str}"), Style::default().fg(theme.fg)),
+            Span::styled(format!("{bat_status} | Health: {bat_health}% | Cycles: {bat_cycles_str} | Draw: {bat_power_str}"), Style::default().fg(theme.fg)),
         ]),
         render_gauge(
             "Charge Limit",
@@ -328,8 +332,8 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
 }
 
 fn render_advanced_power_modal(f: &mut Frame, area: Rect, theme: &crate::ui::theme::Theme) {
-    let modal_w = 64.min(area.width.saturating_sub(4));
-    let modal_h = 11.min(area.height.saturating_sub(2));
+    let modal_w = 72.min(area.width.saturating_sub(4));
+    let modal_h = 12.min(area.height.saturating_sub(2));
     let x = (area.width.saturating_sub(modal_w)) / 2;
     let y = (area.height.saturating_sub(modal_h)) / 2;
     let modal_area = Rect::new(x, y, modal_w, modal_h);
@@ -339,13 +343,40 @@ fn render_advanced_power_modal(f: &mut Frame, area: Rect, theme: &crate::ui::the
     let inner = block.inner(modal_area);
     f.render_widget(block, modal_area);
 
+    let pl1_w = std::fs::read_to_string("/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|uw| uw / 1_000_000)
+        .unwrap_or(100);
+    let pl2_w = std::fs::read_to_string("/sys/class/powercap/intel-rapl:0/constraint_1_power_limit_uw")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|uw| uw / 1_000_000)
+        .unwrap_or(135);
+    let peak_w = std::fs::read_to_string("/sys/class/powercap/intel-rapl:0/constraint_2_power_limit_uw")
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|uw| uw / 1_000_000)
+        .unwrap_or(195);
+
     let lines = vec![
         Line::from(""),
-        Line::from(Span::styled("  Status: Not available on this hardware", Style::default().fg(theme.warn).add_modifier(Modifier::BOLD))),
+        Line::from(vec![
+            Span::styled("  PL1 (Long-Term SPL)  : ", Style::default().fg(theme.dim)),
+            Span::styled(format!("{pl1_w} W "), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+            Span::styled("(read-only Intel RAPL)", Style::default().fg(theme.dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  PL2 (Short-Term sPPT) : ", Style::default().fg(theme.dim)),
+            Span::styled(format!("{pl2_w} W "), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+            Span::styled("(read-only Intel RAPL)", Style::default().fg(theme.dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Peak Power Limit     : ", Style::default().fg(theme.dim)),
+            Span::styled(format!("{peak_w} W"), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("  Hardware ACPI WMI firmware on this ASUS TUF Gaming F16", Style::default().fg(theme.dim))),
-        Line::from(Span::styled("  (FX608JH) does not expose configurable PL1/PL2/TGP registers.", Style::default().fg(theme.dim))),
-        Line::from(Span::styled("  Power envelopes are managed dynamically by CachyOS BORE kernel.", Style::default().fg(theme.dim))),
+        Line::from(Span::styled("  Firmware Attributes   : Mutable sliders unavailable via ASUS WMI on FX608JH", Style::default().fg(theme.warn))),
         Line::from(""),
         Line::from(Span::styled("  [Press Esc or Enter to dismiss]", Style::default().fg(theme.accent))),
     ];

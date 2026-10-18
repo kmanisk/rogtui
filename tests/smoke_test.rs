@@ -243,5 +243,96 @@ async fn test_render_all_tabs_80x24_and_120x40() {
     }
 }
 
+#[tokio::test]
+async fn test_rgb_hsv_conversions() {
+    use rogtui::backend::types::RgbColor;
 
+    let red = RgbColor::new(255, 0, 0);
+    let (h, s, v) = red.to_hsv();
+    assert!((h - 0.0).abs() < 0.1);
+    assert!((s - 100.0).abs() < 0.1);
+    assert!((v - 100.0).abs() < 0.1);
+    assert_eq!(RgbColor::from_hsv(h, s, v), red);
 
+    let cyan = RgbColor::new(0, 255, 255);
+    let (h, s, v) = cyan.to_hsv();
+    assert!((h - 180.0).abs() < 0.1);
+    assert_eq!(RgbColor::from_hsv(h, s, v), cyan);
+
+    let custom = RgbColor::new(128, 64, 200);
+    let (h, s, v) = custom.to_hsv();
+    let back = RgbColor::from_hsv(h, s, v);
+    assert!((back.r as i16 - custom.r as i16).abs() <= 1);
+    assert!((back.g as i16 - custom.g as i16).abs() <= 1);
+    assert!((back.b as i16 - custom.b as i16).abs() <= 1);
+}
+
+#[tokio::test]
+async fn test_color_picker_modal_flow() {
+    use crossterm::event::{KeyCode, KeyEvent};
+
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+
+    app.current_tab = ActiveTab::Aura;
+    app.aura_brightness = 2; // Medium
+    app.aura_selected_field = 2; // Primary color
+    let orig_color = app.aura_data.color1;
+
+    // Press 'c' to open color picker modal
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('c'))).await;
+    assert!(app.show_color_picker_modal, "Color picker modal must open on 'c'");
+    assert_eq!(app.picker_target_slot, 1);
+
+    // Adjust Hue with 'l'
+    let prev_hue = app.picker_hue;
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
+    assert_ne!(app.picker_hue, prev_hue, "Hue must adjust on 'l'");
+
+    // Cancel with Esc -> must revert color and close modal
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Esc)).await;
+    assert!(!app.show_color_picker_modal, "Modal must close on Esc");
+    assert_eq!(app.aura_data.color1, orig_color, "Color must revert to original on cancel");
+
+    // Open again with Enter on field 2
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Enter)).await;
+    assert!(app.show_color_picker_modal, "Modal must open on Enter");
+
+    // Switch to Red slider (j x 3)
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('j'))).await;
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('j'))).await;
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('j'))).await;
+    assert_eq!(app.picker_slider_idx, 3, "Slider index should be Red (3)");
+
+    // Adjust Red slider
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
+    let new_color = app.picker_current_color();
+
+    // Confirm with Enter -> applies color
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Enter)).await;
+    assert!(!app.show_color_picker_modal, "Modal must close on Enter");
+    assert_eq!(app.aura_data.color1, new_color, "Selected color must be applied");
+}
+
+#[tokio::test]
+async fn test_modal_rendering_stability() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+
+    for (w, h) in [(80, 24), (120, 40)] {
+        let test_backend = ratatui::backend::TestBackend::new(w, h);
+        let mut terminal = ratatui::Terminal::new(test_backend).expect("terminal creation");
+
+        // Advanced power modal
+        app.current_tab = ActiveTab::Dashboard;
+        app.show_advanced_power_modal = true;
+        terminal.draw(|f| rogtui::ui::render_ui(f, &app)).expect("draw succeeded");
+        app.show_advanced_power_modal = false;
+
+        // Color picker modal
+        app.current_tab = ActiveTab::Aura;
+        app.open_color_picker(1);
+        terminal.draw(|f| rogtui::ui::render_ui(f, &app)).expect("draw succeeded");
+        app.show_color_picker_modal = false;
+    }
+}

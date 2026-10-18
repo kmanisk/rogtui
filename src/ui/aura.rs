@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Clear, Paragraph},
     Frame,
 };
 
@@ -116,7 +116,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // Primary Color Row
     let c1_sel = app.aura_selected_field == 2;
     let c1_hex = c1.to_hex();
-    let c1_header = format!("  Primary Color (h/l preset): {}  ", c1_hex);
+    let c1_header = format!("  Primary Color [c: picker]: {}  ", c1_hex);
     col_lines.push(Line::from(vec![
         Span::styled(c1_header, if c1_sel { theme.sel_style() } else { Style::default().fg(theme.dim) }),
         Span::styled("██████", c1_swatch),
@@ -138,7 +138,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // Secondary Color Row (only for effects supporting 2 colors: breathe, pulse, custom)
     let c2_sel = app.aura_selected_field == 6;
     let c2_hex = c2.to_hex();
-    let c2_header = format!("  Secondary Color           : {}  ", c2_hex);
+    let c2_header = format!("  Secondary Color [c: picker]: {}  ", c2_hex);
     col_lines.push(Line::from(vec![
         Span::styled(c2_header, if c2_sel { theme.sel_style() } else { Style::default().fg(theme.dim) }),
         Span::styled("██████", c2_swatch),
@@ -252,4 +252,111 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
 
         f.render_widget(Paragraph::new(right_lines), details_inner);
     }
+
+    if app.show_color_picker_modal {
+        render_color_picker_modal(f, app, area);
+    }
+}
+
+fn render_color_picker_modal<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
+    let theme = &app.theme;
+    let modal_w = 70.min(area.width.saturating_sub(4));
+    let modal_h = 13.min(area.height.saturating_sub(2));
+    let x = (area.width.saturating_sub(modal_w)) / 2;
+    let y = (area.height.saturating_sub(modal_h)) / 2;
+    let modal_area = Rect::new(x, y, modal_w, modal_h);
+
+    f.render_widget(Clear, modal_area);
+    let title = format!(" 24-bit RGB / HSV Color Picker (Slot {}) ", app.picker_target_slot);
+    let block = panel_block(&title, true, theme);
+    let inner = block.inner(modal_area);
+    f.render_widget(block, modal_area);
+
+    let cur_col = app.picker_current_color();
+    let cur_hex = cur_col.to_hex();
+    let swatch_style = Style::default().fg(Color::Rgb(cur_col.r, cur_col.g, cur_col.b));
+
+    let mut lines = Vec::new();
+
+    // 1. Target Slot & Hex readout & Live swatch
+    lines.push(Line::from(vec![
+        Span::styled(format!("  Target: Slot {}   ", app.picker_target_slot), Style::default().fg(theme.dim)),
+        Span::styled(format!("Hex: {cur_hex}   "), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        Span::styled("Swatch: ", Style::default().fg(theme.dim)),
+        Span::styled("████████████", swatch_style),
+    ]));
+
+    // 2. 24-bit half-block gradient strip (top half = pure hue, bottom half = shaded by S & V)
+    let strip_len = (inner.width as usize).saturating_sub(6).clamp(20, 56);
+    let mut strip_spans = vec![Span::styled("  [", Style::default().fg(theme.dim))];
+    for i in 0..strip_len {
+        let h = (i as f32 / strip_len as f32) * 360.0;
+        let c_top = RgbColor::from_hsv(h, 100.0, 100.0);
+        let c_bot = RgbColor::from_hsv(h, app.picker_sat, app.picker_val);
+        strip_spans.push(Span::styled(
+            "▀",
+            Style::default()
+                .fg(Color::Rgb(c_top.r, c_top.g, c_top.b))
+                .bg(Color::Rgb(c_bot.r, c_bot.g, c_bot.b)),
+        ));
+    }
+    strip_spans.push(Span::styled("]", Style::default().fg(theme.dim)));
+    lines.push(Line::from(strip_spans));
+
+    // 3. Indicator marker
+    let marker_pos = ((app.picker_hue / 360.0) * (strip_len as f32)).round() as usize;
+    let marker_pos = marker_pos.min(strip_len.saturating_sub(1));
+    let mut marker_line = String::from("   ");
+    marker_line.push_str(&" ".repeat(marker_pos));
+    marker_line.push('▲');
+    lines.push(Line::from(Span::styled(
+        marker_line,
+        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+    )));
+
+    // 4. Sliders (HSV and RGB)
+    let slider_width = 24;
+    let make_slider_bar = |val: f32, max: f32| -> String {
+        let filled = ((val / max) * slider_width as f32).round().clamp(0.0, slider_width as f32) as usize;
+        let empty = slider_width - filled;
+        format!("[{}{}]", "█".repeat(filled), "━".repeat(empty))
+    };
+
+    let sliders: [(usize, &str, String, String); 6] = [
+        (0, "Hue (H)        ", make_slider_bar(app.picker_hue, 360.0), format!("{:>3}°", app.picker_hue.round() as u32)),
+        (1, "Saturation (S) ", make_slider_bar(app.picker_sat, 100.0), format!("{:>3}%", app.picker_sat.round() as u32)),
+        (2, "Value / Luma(V)", make_slider_bar(app.picker_val, 100.0), format!("{:>3}%", app.picker_val.round() as u32)),
+        (3, "Red (R)        ", make_slider_bar(cur_col.r as f32, 255.0), format!("{:>3}", cur_col.r)),
+        (4, "Green (G)      ", make_slider_bar(cur_col.g as f32, 255.0), format!("{:>3}", cur_col.g)),
+        (5, "Blue (B)       ", make_slider_bar(cur_col.b as f32, 255.0), format!("{:>3}", cur_col.b)),
+    ];
+
+    for (s_idx, label, bar, val_str) in sliders {
+        let is_sel = app.picker_slider_idx == s_idx;
+        let row_content = format!("  {label}: {bar} {val_str}");
+        if is_sel {
+            lines.push(Line::from(Span::styled(row_content, theme.sel_style())));
+        } else {
+            let col_tint = match s_idx {
+                3 => theme.err,
+                4 => theme.ok,
+                5 => Color::Blue,
+                _ => theme.fg,
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {label}: "), Style::default().fg(theme.dim)),
+                Span::styled(bar, Style::default().fg(col_tint)),
+                Span::styled(format!(" {val_str}"), Style::default().fg(theme.fg)),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  j/k: select slider  h/l: adjust  ", Style::default().fg(theme.dim)),
+        Span::styled("Enter: apply  ", Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)),
+        Span::styled("Esc: cancel", Style::default().fg(theme.dim)),
+    ]));
+
+    f.render_widget(Paragraph::new(lines), inner);
 }

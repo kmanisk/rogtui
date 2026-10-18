@@ -1,8 +1,86 @@
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+
+type AuraModeRaw = (u32, u32, (u8, u8, u8), (u8, u8, u8), String, String);
+
+#[zbus::proxy(
+    interface = "xyz.ljones.Aura",
+    default_service = "xyz.ljones.Asusd",
+    default_path = "/xyz/ljones/aura/tuf"
+)]
+trait AuraProbe {
+    #[zbus(property)]
+    fn brightness(&self) -> zbus::Result<u32>;
+
+    #[zbus(property)]
+    fn set_brightness(&self, value: u32) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn led_mode(&self) -> zbus::Result<u32>;
+
+    #[zbus(property)]
+    fn set_led_mode(&self, value: u32) -> zbus::Result<()>;
+
+    #[zbus(property)]
+    fn led_mode_data(&self) -> zbus::Result<AuraModeRaw>;
+
+    #[zbus(property)]
+    fn set_led_mode_data(&self, value: AuraModeRaw) -> zbus::Result<()>;
+}
+
+struct AuraStateBackup {
+    mode: u32,
+    brightness: u32,
+    mode_data: Option<AuraModeRaw>,
+    sysfs_path: &'static str,
+}
+
+impl AuraStateBackup {
+    fn restore_sync(&self) {
+        println!("Restoring previous lighting state...");
+        // Restore sysfs with cmd=0 (non-persistent)
+        let (r, g, b, speed_val) = if let Some(ref d) = self.mode_data {
+            let col = d.2;
+            let spd = match d.4.as_str() {
+                "Slow" => 0,
+                "Fast" => 2,
+                _ => 1,
+            };
+            (col.0, col.1, col.2, spd)
+        } else {
+            (0, 200, 255, 1)
+        };
+
+        let payload = format!("0 {} {} {} {} {}", self.mode, r, g, b, speed_val);
+        let _ = Command::new("sudo")
+            .args(["tee", self.sysfs_path])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .and_then(|mut child| {
+                if let Some(mut stdin) = child.stdin.take() {
+                    let _ = stdin.write_all(payload.as_bytes());
+                }
+                child.wait()
+            });
+    }
+
+    async fn restore_async(&self, conn: &zbus::Connection) {
+        self.restore_sync();
+        if let Ok(proxy) = AuraProbeProxy::new(conn).await {
+            let _ = proxy.set_led_mode(self.mode).await;
+            let _ = proxy.set_brightness(self.brightness).await;
+            if let Some(ref d) = self.mode_data {
+                let _ = proxy.set_led_mode_data(d.clone()).await;
+            }
+        }
+    }
+}
 
 pub async fn run_probe() -> anyhow::Result<()> {
     println!("rogtui - Keyboard LED Aura Mode Prober");
@@ -11,8 +89,8 @@ pub async fn run_probe() -> anyhow::Result<()> {
     println!("Target interface: /sys/class/leds/asus::kbd_backlight/kbd_rgb_mode");
     println!("Mode parameter: cmd=0 (volatile, non-persistent, set in EC RAM)");
     println!();
-    println!("This prober will sweep modes 0 through 12, holding each for 2 seconds with cyan color.");
-    println!("For each mode, observe your physical keyboard and report what you see.");
+    println!("Note: Modes 9 and 12 are kernel aliases clamped to mode 10 (Pulse) by");
+    println!("drivers/platform/x86/asus-wmi.c line 1079; skipped to avoid redundant tests.");
     println!();
 
     let sysfs_path = "/sys/class/leds/asus::kbd_backlight/kbd_rgb_mode";
@@ -21,11 +99,44 @@ pub async fn run_probe() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // 1. Read and store current asusd aura state before sweeping
+    let conn = zbus::Connection::system().await?;
+    let proxy = AuraProbeProxy::new(&conn).await?;
+
+    let initial_mode = proxy.led_mode().await.unwrap_or(0);
+    let initial_brightness = proxy.brightness().await.unwrap_or(2);
+    let initial_mode_data = proxy.led_mode_data().await.ok();
+
+    let backup = Arc::new(AuraStateBackup {
+        mode: initial_mode,
+        brightness: initial_brightness,
+        mode_data: initial_mode_data,
+        sysfs_path,
+    });
+
+    println!(
+        "Saved initial lighting state: Mode {}, Brightness {}",
+        backup.mode, backup.brightness
+    );
+
+    // Setup cancellation / Ctrl-C hook
+    let running = Arc::new(AtomicBool::new(true));
+    let r_clone = running.clone();
+    let b_clone = backup.clone();
+
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        println!("\nAborting probe on Ctrl-C...");
+        r_clone.store(false, Ordering::SeqCst);
+        b_clone.restore_sync();
+        std::process::exit(130);
+    });
+
     let stdin = io::stdin();
     let mut reader = stdin.lock();
-
     let mut results = Vec::new();
 
+    // Distinct modes only: 0..=8, 10, 11 (skip 9 and 12)
     let mode_names = [
         (0, "Static"),
         (1, "Breathe"),
@@ -36,13 +147,15 @@ pub async fn run_probe() -> anyhow::Result<()> {
         (6, "Highlight"),
         (7, "Laser"),
         (8, "Ripple"),
-        (9, "Mode 9 (kernel maps to 10)"),
         (10, "Pulse"),
-        (11, "Comet / Warning"),
-        (12, "Flash (kernel maps to 10)"),
+        (11, "Comet / Strobe Warning"),
     ];
 
     for (mode, default_name) in mode_names {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+
         println!("--------------------------------------------------");
         println!("Testing Mode {mode} ({default_name})...");
 
@@ -68,7 +181,7 @@ pub async fn run_probe() -> anyhow::Result<()> {
         // Wait 2 seconds for animation to be observed
         sleep(Duration::from_secs(2)).await;
 
-        print!("Mode {mode}: Visible effect on physical keyboard? [y/n + name/notes] (default: y {default_name}): ");
+        print!("Mode {mode}: Visible effect on physical keyboard? [y/n + name/description] (default: y {default_name}): ");
         io::stdout().flush()?;
 
         let mut line = String::new();
@@ -83,20 +196,10 @@ pub async fn run_probe() -> anyhow::Result<()> {
         results.push((mode, default_name, final_ans));
     }
 
-    // Restore safe default (Mode 0 Static Cyan)
+    // 2. Restore exact saved lighting state
     println!("--------------------------------------------------");
-    println!("Restoring default static lighting...");
-    let _ = Command::new("sudo")
-        .args(["tee", sysfs_path])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .and_then(|mut child| {
-            if let Some(mut stdin) = child.stdin.take() {
-                let _ = stdin.write_all(b"0 0 0 200 255 1");
-            }
-            child.wait()
-        });
+    backup.restore_async(&conn).await;
+    println!("Original lighting state successfully restored.");
 
     // Write results to ~/.config/rogtui/modes.toml
     let config_dir = dirs_or_home()?;

@@ -110,6 +110,52 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         return;
     }
 
+    // 2c. If color picker modal is open, handle picker navigation and adjustments
+    if app.show_color_picker_modal {
+        match key.code {
+            KeyCode::Esc => {
+                let init = app.picker_initial_color;
+                if app.picker_target_slot == 2 {
+                    app.aura_data.color2 = init;
+                } else {
+                    app.aura_data.color1 = init;
+                    if app.aura_mode == 0 {
+                        let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    }
+                }
+                app.show_color_picker_modal = false;
+                app.set_status("Color edit cancelled", false);
+            }
+            KeyCode::Enter => {
+                let chosen = app.picker_current_color();
+                if app.picker_target_slot == 2 {
+                    app.aura_data.color2 = chosen;
+                } else {
+                    app.aura_data.color1 = chosen;
+                }
+                if app.aura_mode == 0 {
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                }
+                app.show_color_picker_modal = false;
+                app.set_status(format!("Applied {} to Slot {}", chosen.to_hex(), app.picker_target_slot), false);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                app.picker_slider_idx = (app.picker_slider_idx + 5) % 6;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                app.picker_slider_idx = (app.picker_slider_idx + 1) % 6;
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                adjust_picker_slider(app, -1).await;
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                adjust_picker_slider(app, 1).await;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // 3. Global shortcuts
     match key.code {
         KeyCode::Char('?') => {
@@ -657,7 +703,27 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
         KeyCode::Right | KeyCode::Char('l') => {
             adjust_aura_field(app, 1).await;
         }
-        KeyCode::Enter | KeyCode::Char(' ') => {
+        KeyCode::Char('c') => {
+            if app.aura_brightness > 0 {
+                let slot = if app.aura_selected_field == 6 { 2 } else { 1 };
+                app.open_color_picker(slot);
+            } else {
+                app.set_status("Backlight is Off. Increase brightness to access colors.", true);
+            }
+        }
+        KeyCode::Enter => {
+            if app.aura_brightness > 0 {
+                if app.aura_selected_field == 2 || (3..=5).contains(&app.aura_selected_field) {
+                    app.open_color_picker(1);
+                    return;
+                } else if app.aura_selected_field == 6 {
+                    app.open_color_picker(2);
+                    return;
+                }
+            }
+            adjust_aura_field(app, 1).await;
+        }
+        KeyCode::Char(' ') => {
             adjust_aura_field(app, 1).await;
         }
         KeyCode::Char('w') => {
@@ -783,6 +849,51 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let _ = app.backend.set_aura_power(&app.aura_power).await;
         }
         _ => {}
+    }
+}
+
+async fn adjust_picker_slider<B: Backend>(app: &mut AppState<B>, dir: i32) {
+    match app.picker_slider_idx {
+        0 => {
+            app.picker_hue = (app.picker_hue + dir as f32 * 5.0).rem_euclid(360.0);
+        }
+        1 => {
+            app.picker_sat = (app.picker_sat + dir as f32 * 2.0).clamp(0.0, 100.0);
+        }
+        2 => {
+            app.picker_val = (app.picker_val + dir as f32 * 2.0).clamp(0.0, 100.0);
+        }
+        3 => {
+            let mut col = app.picker_current_color();
+            col.r = (col.r as i16 + dir as i16 * 5).clamp(0, 255) as u8;
+            let (h, s, v) = col.to_hsv();
+            app.picker_hue = h;
+            app.picker_sat = s;
+            app.picker_val = v;
+        }
+        4 => {
+            let mut col = app.picker_current_color();
+            col.g = (col.g as i16 + dir as i16 * 5).clamp(0, 255) as u8;
+            let (h, s, v) = col.to_hsv();
+            app.picker_hue = h;
+            app.picker_sat = s;
+            app.picker_val = v;
+        }
+        5 => {
+            let mut col = app.picker_current_color();
+            col.b = (col.b as i16 + dir as i16 * 5).clamp(0, 255) as u8;
+            let (h, s, v) = col.to_hsv();
+            app.picker_hue = h;
+            app.picker_sat = s;
+            app.picker_val = v;
+        }
+        _ => {}
+    }
+
+    if app.picker_target_slot == 1 && app.aura_mode == 0 {
+        let cur = app.picker_current_color();
+        app.aura_data.color1 = cur;
+        let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
     }
 }
 

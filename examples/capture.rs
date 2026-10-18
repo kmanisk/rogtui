@@ -45,6 +45,52 @@ async fn main() -> anyhow::Result<()> {
             std::fs::write(&file_path, content)?;
             println!("Saved capture: {file_path}");
         }
+
+        // Capture Dashboard Advanced Power Modal
+        {
+            app.current_tab = ActiveTab::Dashboard;
+            app.show_advanced_power_modal = true;
+            let test_backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(test_backend)?;
+            terminal.draw(|f| render_ui(f, &app))?;
+            let buffer = terminal.backend().buffer();
+            let mut content = String::new();
+            for y in 0..h {
+                let mut line = String::new();
+                for x in 0..w {
+                    line.push_str(buffer[(x, y)].symbol());
+                }
+                content.push_str(line.trim_end());
+                content.push('\n');
+            }
+            let file_path = format!("target/captures/dashboard_power_modal_{w}x{h}.txt");
+            std::fs::write(&file_path, content)?;
+            println!("Saved capture: {file_path}");
+            app.show_advanced_power_modal = false;
+        }
+
+        // Capture Aura Color Picker Modal
+        {
+            app.current_tab = ActiveTab::Aura;
+            app.open_color_picker(1);
+            let test_backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(test_backend)?;
+            terminal.draw(|f| render_ui(f, &app))?;
+            let buffer = terminal.backend().buffer();
+            let mut content = String::new();
+            for y in 0..h {
+                let mut line = String::new();
+                for x in 0..w {
+                    line.push_str(buffer[(x, y)].symbol());
+                }
+                content.push_str(line.trim_end());
+                content.push('\n');
+            }
+            let file_path = format!("target/captures/aura_color_picker_modal_{w}x{h}.txt");
+            std::fs::write(&file_path, content)?;
+            println!("Saved capture: {file_path}");
+            app.show_color_picker_modal = false;
+        }
     }
 
     Ok(())

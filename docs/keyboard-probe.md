@@ -71,16 +71,27 @@ static ssize_t kbd_rgb_mode_store(struct device *dev,
 ```
 
 ### Verified Facts:
-1. **`cmd = 0` vs `cmd = 1`**:
-   - `cmd = 0` sets the WMI payload command byte to `0xb3` ("B3 is set").
-   - `cmd = 1` sets the WMI payload command byte to `0xb4` ("B4 is save to BIOS").
-   - Any other value returns `-EINVAL`.
-2. **Reboot Verification Requirement**:
-   - Until tested live across a system reboot (set color with `cmd = 0`, reboot, verify revert), high-rate live software effects will NOT use `kbd_rgb_mode`. They will use `asusd` DBus or the multicolour LED class (`multi_intensity` + `brightness`).
-3. **Mode Value Normalization**:
-   - Line 1079: `if (mode >= 12 || mode == 9) mode = 10;`
-   - Modes 9 and >= 12 are unconditionally remapped to mode 10 by the kernel driver before calling ACPI/WMI.
-   - Distinct modes passed to WMI are `0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11`.
+1. **Source Verification & Kernel Tag Audit**:
+   - Initial source examination was referenced from a public kernel mirror (`gitlab.elettra.eu`).
+   - Subsequently verified directly against the running system kernel (`uname -r`: `7.2.11-1-cachyos`) using the exact upstream CachyOS source repository (`https://github.com/CachyOS/linux`, release tag `cachyos-7.2.11-1`, file `drivers/platform/x86/asus-wmi.c` lines 1050–1101).
+   - The implementation is completely identical in the running kernel:
+     - `/* B3 is set and B4 is save to BIOS */`
+     - `case 0: cmd = 0xb3; break;` (volatile set to EC RAM)
+     - `case 1: cmd = 0xb4; break;` (persistent save to BIOS NVRAM)
+     - Line 1079: `if (mode >= 12 || mode == 9) mode = 10;`
+2. **Distinct Modes vs Aliases**:
+   - Because the kernel driver unconditionally normalizes `mode >= 12 || mode == 9` to mode 10 (`Pulse`), modes 9 and 12 are kernel aliases.
+   - The real distinct mode numbers accepted by WMI are: `0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11`. Probing sweeps exclusively these 11 distinct modes.
+3. **Reboot Verification Requirement**:
+   - Until tested live across a physical reboot, live effects will avoid high-rate `kbd_rgb_mode`.
+   - **Reboot Test Procedure**:
+     1. Stop and mask asusd to prevent re-applying saved profile on boot:
+        `sudo systemctl stop asusd && sudo systemctl mask asusd`
+     2. Write distinctive red color with cmd=0:
+        `echo "0 0 255 0 0 0" | sudo tee /sys/class/leds/asus::kbd_backlight/kbd_rgb_mode`
+     3. Reboot system. Check if keyboard reverts away from red.
+     4. Unmask and restart asusd:
+        `sudo systemctl unmask asusd && sudo systemctl start asusd`
 
 ---
 

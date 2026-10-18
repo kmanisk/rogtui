@@ -591,6 +591,7 @@ dependencies = [
  "anyhow",
  "crossterm",
  "futures-lite",
+ "libc",
  "ratatui",
  "serde",
  "thiserror",

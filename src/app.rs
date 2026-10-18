@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::backend::types::{
     ArmouryAttribute, AuraModeData, AuraPowerState, FanCurve, GpuMode, GpuPowerState,
-    PendingUserAction, PlatformProfile, SensorData,
+    PendingUserAction, PlatformProfile, RgbColor, SensorData,
 };
 use crate::backend::Backend;
 use crate::ui::theme::Theme;
@@ -129,6 +129,15 @@ pub struct AppState<B: Backend> {
     pub aura_selected_field: usize,
     pub hex_input_buffer: Option<String>,
 
+    // Color Picker Modal State
+    pub show_color_picker_modal: bool,
+    pub picker_target_slot: usize,
+    pub picker_slider_idx: usize,
+    pub picker_hue: f32,
+    pub picker_sat: f32,
+    pub picker_val: f32,
+    pub picker_initial_color: RgbColor,
+
     // Armoury Attributes State
     pub armoury_attributes: Vec<ArmouryAttribute>,
     pub armoury_selected_idx: usize,
@@ -240,6 +249,13 @@ impl<B: Backend> AppState<B> {
             aura_power,
             aura_selected_field: 0,
             hex_input_buffer: None,
+            show_color_picker_modal: false,
+            picker_target_slot: 1,
+            picker_slider_idx: 0,
+            picker_hue: 180.0,
+            picker_sat: 100.0,
+            picker_val: 100.0,
+            picker_initial_color: RgbColor::new(0, 200, 255),
             armoury_attributes,
             armoury_selected_idx: 0,
             show_unavailable_armoury: false,
@@ -248,6 +264,26 @@ impl<B: Backend> AppState<B> {
             gpu_temp_history,
             power_selected_field: 0,
         })
+    }
+
+    pub fn open_color_picker(&mut self, slot: usize) {
+        self.show_color_picker_modal = true;
+        self.picker_target_slot = slot;
+        self.picker_slider_idx = 0;
+        let col = if slot == 2 {
+            self.aura_data.color2
+        } else {
+            self.aura_data.color1
+        };
+        self.picker_initial_color = col;
+        let (h, s, v) = col.to_hsv();
+        self.picker_hue = h;
+        self.picker_sat = s;
+        self.picker_val = v;
+    }
+
+    pub fn picker_current_color(&self) -> RgbColor {
+        RgbColor::from_hsv(self.picker_hue, self.picker_sat, self.picker_val)
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>, is_error: bool) {

@@ -1,6 +1,7 @@
 use std::future::Future;
 
 pub mod mock;
+pub mod nvml;
 pub mod real;
 pub mod types;
 
