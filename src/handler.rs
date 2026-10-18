@@ -102,6 +102,14 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         return;
     }
 
+    // 2b. If advanced power modal is open, dismiss on Esc/Enter/a/q
+    if app.show_advanced_power_modal {
+        if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('q') | KeyCode::Char(' ')) {
+            app.show_advanced_power_modal = false;
+        }
+        return;
+    }
+
     // 3. Global shortcuts
     match key.code {
         KeyCode::Char('?') => {
@@ -126,6 +134,7 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         KeyCode::Char('4') => { app.current_tab = ActiveTab::Aura; return; }
         KeyCode::Char('5') => { app.current_tab = ActiveTab::Gpu; return; }
         KeyCode::Char('6') => { app.current_tab = ActiveTab::Armoury; return; }
+        KeyCode::Char('7') => { app.current_tab = ActiveTab::About; return; }
         KeyCode::Char('p') => {
             let next_p = match app.platform_profile {
                 PlatformProfile::Quiet => PlatformProfile::Balanced,
@@ -160,22 +169,95 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         ActiveTab::Aura => handle_aura(app, key).await,
         ActiveTab::Gpu => handle_gpu(app, key).await,
         ActiveTab::Armoury => handle_armoury(app, key).await,
+        ActiveTab::About => handle_about(app, key).await,
     }
 }
 
 async fn handle_dashboard<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
-    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
-        let next_p = match app.platform_profile {
-            PlatformProfile::Quiet => PlatformProfile::Balanced,
-            PlatformProfile::Balanced => PlatformProfile::Performance,
-            PlatformProfile::Performance => PlatformProfile::Quiet,
-            PlatformProfile::Custom => PlatformProfile::Balanced,
-        };
-        if let Err(e) = app.backend.set_platform_profile(next_p).await {
-            app.set_status(format!("Error setting profile: {e}"), true);
-        } else {
-            app.platform_profile = next_p;
-            app.set_status(format!("Platform profile: {}", next_p.as_str()), false);
+    match key.code {
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            let next_p = match app.platform_profile {
+                PlatformProfile::Quiet => PlatformProfile::Balanced,
+                PlatformProfile::Balanced => PlatformProfile::Performance,
+                PlatformProfile::Performance => PlatformProfile::Quiet,
+                PlatformProfile::Custom => PlatformProfile::Balanced,
+            };
+            if let Err(e) = app.backend.set_platform_profile(next_p).await {
+                app.set_status(format!("Error setting profile: {e}"), true);
+            } else {
+                app.platform_profile = next_p;
+                app.set_status(format!("Platform profile: {}", next_p.as_str()), false);
+            }
+        }
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            app.show_advanced_power_modal = true;
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') => {
+            let cur = app.sensors.panel_overdrive.unwrap_or(true);
+            let next_val = if cur { 0 } else { 1 };
+            if let Err(e) = app.backend.set_armoury_attribute("panel_overdrive", next_val).await {
+                app.set_status(format!("Failed to toggle Panel Overdrive: {e}"), true);
+            } else {
+                app.sensors.panel_overdrive = Some(next_val == 1);
+                app.set_status(
+                    format!("Panel Overdrive {}", if next_val == 1 { "Enabled (3ms)" } else { "Disabled" }),
+                    false,
+                );
+            }
+        }
+        KeyCode::Char('b') | KeyCode::Char('B') => {
+            let cur = app.sensors.screen_auto_brightness.unwrap_or(false);
+            let next_val = if cur { 0 } else { 1 };
+            if let Err(e) = app.backend.set_armoury_attribute("screen_auto_brightness", next_val).await {
+                app.set_status(format!("Failed to toggle Auto-Brightness: {e}"), true);
+            } else {
+                app.sensors.screen_auto_brightness = Some(next_val == 1);
+                app.set_status(
+                    format!("Screen Auto-Brightness {}", if next_val == 1 { "Enabled (ALS)" } else { "Disabled" }),
+                    false,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn handle_about<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
+    if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let diag_path = format!("{home}/rogtui-diagnostics.txt");
+
+        let mut doc = String::new();
+        doc.push_str("================================================================================\n");
+        doc.push_str("rogtui System Diagnostics & Hardware Capabilities Report\n");
+        doc.push_str("================================================================================\n\n");
+        doc.push_str("Machine: ASUS TUF Gaming F16 (FX608JH)\n");
+        doc.push_str("rogtui Version: v0.1.0\n");
+        doc.push_str(&format!("Kernel Version: {}\n", std::fs::read_to_string("/proc/version").unwrap_or_default().trim()));
+        doc.push_str(&format!("Platform Profile: {}\n", app.platform_profile.as_str()));
+        doc.push_str(&format!("GPU Mode: {}\n", app.gpu_mode.as_str()));
+        doc.push_str(&format!("GPU Power State: {}\n", app.gpu_power.as_str()));
+        doc.push_str(&format!("Battery Charge: {}% (Limit: {}%)\n", app.sensors.battery_charge_percent.unwrap_or(0), app.charge_limit));
+        doc.push_str(&format!("Battery Health: {}%\n", app.sensors.battery_health_percent.unwrap_or(98)));
+        doc.push_str(&format!("Aura Brightness: {}\n", app.aura_brightness));
+        doc.push_str(&format!("Aura Mode: {}\n\n", app.aura_mode));
+
+        doc.push_str("--- Armoury Attributes Status ---\n");
+        for attr in &app.armoury_attributes {
+            doc.push_str(&format!("  {:<25}: available={}, value={}\n", attr.node_name, attr.is_available, attr.current_value));
+        }
+
+        doc.push_str("\n--- Fan Curves Configuration ---\n");
+        for curve in &app.fan_curves {
+            doc.push_str(&format!("  Fan: {} (enabled={})\n", curve.fan_name, curve.enabled));
+            for (i, pt) in curve.points.iter().enumerate() {
+                doc.push_str(&format!("    pt{}: {} C -> {}%\n", i + 1, pt.temp, pt.pwm_percent));
+            }
+        }
+
+        match std::fs::write(&diag_path, doc) {
+            Ok(_) => app.set_status(format!("Exported diagnostics to {diag_path}"), false),
+            Err(e) => app.set_status(format!("Failed to write diagnostics: {e}"), true),
         }
     }
 }

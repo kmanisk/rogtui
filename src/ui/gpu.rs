@@ -82,16 +82,23 @@ pub fn render_gpu<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
                 },
             ),
         ]),
+        Line::from(vec![
+            Span::styled("  NV Powerd on BAT : ", Style::default().fg(theme.dim)),
+            Span::styled(
+                if app.disable_powerd_battery { "[x] Disabled (Powersave)" } else { "[ ] Enabled (Full Boost)" },
+                if app.disable_powerd_battery { Style::default().fg(theme.ok) } else { Style::default().fg(theme.dim) },
+            ),
+        ]),
     ];
 
     if app.gpu_supported.len() <= 1 {
         status_lines.push(Line::from(""));
         status_lines.push(Line::from(Span::styled(
-            "  * daemon reports 1 supported mode in direct MUX;",
+            "  * supergfxd reports 1 supported mode in direct MUX (Ultimate);",
             Style::default().fg(theme.dim),
         )));
         status_lines.push(Line::from(Span::styled(
-            "    switch via Armoury (tab 6) or reboot to Optimus to access all modes.",
+            "    switch MUX to Optimus/Hybrid via Armoury (tab 6) or BIOS to unlock all runtime modes.",
             Style::default().fg(theme.dim),
         )));
     }

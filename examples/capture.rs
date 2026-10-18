@@ -16,6 +16,7 @@ async fn main() -> anyhow::Result<()> {
         (ActiveTab::Aura, "aura"),
         (ActiveTab::Gpu, "gpu"),
         (ActiveTab::Armoury, "armoury"),
+        (ActiveTab::About, "about"),
     ];
 
     let sizes = [(80, 24), (120, 40)];

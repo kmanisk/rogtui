@@ -65,6 +65,7 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, active_tab: ActiveTab, theme: &
         (ActiveTab::Aura, "4 RGB"),
         (ActiveTab::Gpu, "5 GPU"),
         (ActiveTab::Armoury, "6 Armoury"),
+        (ActiveTab::About, "7 About"),
     ];
 
     let mut spans = Vec::new();
@@ -91,6 +92,9 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
         ActiveTab::Dashboard => vec![
             ("tab", "switch"),
             ("p", "cycle profile"),
+            ("a", "power limits"),
+            ("o", "overdrive"),
+            ("b", "auto-bright"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -144,6 +148,12 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
             ("enter", "toggle"),
             ("u", "unavail"),
             ("r", "reset"),
+            ("?", "help"),
+            ("q", "quit"),
+        ],
+        ActiveTab::About => vec![
+            ("tab", "switch"),
+            ("y", "export report"),
             ("?", "help"),
             ("q", "quit"),
         ],
@@ -405,6 +415,13 @@ pub fn render_help_overlay(f: &mut Frame, area: Rect, current_tab: ActiveTab, th
             help_lines.push(Line::from(vec![
                 Span::styled("  r                : ", Style::default().fg(theme.warn)),
                 Span::raw("Restore hardware default for selected attribute"),
+            ]));
+        }
+        ActiveTab::About => {
+            help_lines.push(Line::from(Span::styled("  -- About Tab Keys --", Style::default().fg(theme.dim))));
+            help_lines.push(Line::from(vec![
+                Span::styled("  y                : ", Style::default().fg(theme.warn)),
+                Span::raw("Export system diagnostics report to ~/rogtui-diagnostics.txt"),
             ]));
         }
     }

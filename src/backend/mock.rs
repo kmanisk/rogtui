@@ -144,6 +144,22 @@ impl MockBackend {
             battery_charge_limit: 60,
             panel_overdrive: Some(true),
             gpu_mux_mode: Some(false),
+            cpu_model: "13th Gen Intel(R) Core(TM) i5-13450HX".to_string(),
+            cpu_freq_mhz: Some(3900),
+            cpu_usage_percent: Some(18),
+            ram_used_mb: Some(10129),
+            ram_total_mb: Some(15584),
+            ram_usage_percent: Some(64),
+            igpu_name: "Intel UHD Graphics (iHD)".to_string(),
+            igpu_temp_c: Some(51),
+            dgpu_name: "NVIDIA GeForce RTX 5050 Mobile".to_string(),
+            dgpu_status: "Active (46 C)".to_string(),
+            dgpu_power_state: "Active".to_string(),
+            battery_status: "Not charging".to_string(),
+            battery_power_w: Some(0.0),
+            battery_health_percent: Some(98),
+            battery_cycle_count: Some(0),
+            screen_auto_brightness: Some(false),
         };
 
         Self {

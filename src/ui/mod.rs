@@ -1,3 +1,4 @@
+pub mod about;
 pub mod armoury;
 pub mod aura;
 pub mod dashboard;
@@ -52,6 +53,7 @@ pub fn render_ui<B: Backend>(f: &mut Frame, app: &AppState<B>) {
         ActiveTab::Aura => aura::render_aura(f, app, chunks[2]),
         ActiveTab::Gpu => gpu::render_gpu(f, app, chunks[2]),
         ActiveTab::Armoury => armoury::render_armoury(f, app, chunks[2]),
+        ActiveTab::About => about::render_about(f, app, chunks[2]),
     }
 
     render_footer(f, chunks[3], app, &app.theme);

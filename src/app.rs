@@ -16,6 +16,7 @@ pub enum ActiveTab {
     Aura = 3,
     Gpu = 4,
     Armoury = 5,
+    About = 6,
 }
 
 impl ActiveTab {
@@ -27,6 +28,7 @@ impl ActiveTab {
             ActiveTab::Aura,
             ActiveTab::Gpu,
             ActiveTab::Armoury,
+            ActiveTab::About,
         ]
     }
 
@@ -38,6 +40,7 @@ impl ActiveTab {
             ActiveTab::Aura => "4.RGB Aura",
             ActiveTab::Gpu => "5.GPU (supergfx)",
             ActiveTab::Armoury => "6.Armoury/Firmware",
+            ActiveTab::About => "7.About",
         }
     }
 
@@ -48,18 +51,20 @@ impl ActiveTab {
             ActiveTab::FanCurves => ActiveTab::Aura,
             ActiveTab::Aura => ActiveTab::Gpu,
             ActiveTab::Gpu => ActiveTab::Armoury,
-            ActiveTab::Armoury => ActiveTab::Dashboard,
+            ActiveTab::Armoury => ActiveTab::About,
+            ActiveTab::About => ActiveTab::Dashboard,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            ActiveTab::Dashboard => ActiveTab::Armoury,
+            ActiveTab::Dashboard => ActiveTab::About,
             ActiveTab::Power => ActiveTab::Dashboard,
             ActiveTab::FanCurves => ActiveTab::Power,
             ActiveTab::Aura => ActiveTab::FanCurves,
             ActiveTab::Gpu => ActiveTab::Aura,
             ActiveTab::Armoury => ActiveTab::Gpu,
+            ActiveTab::About => ActiveTab::Armoury,
         }
     }
 }
@@ -82,6 +87,7 @@ pub struct AppState<B: Backend> {
     pub should_quit: bool,
     pub status_message: Option<(String, bool, Instant)>,
     pub confirm_modal: Option<(String, ConfirmAction)>,
+    pub show_advanced_power_modal: bool,
 
     // Hardware State
     pub platform_profile: PlatformProfile,
@@ -201,6 +207,7 @@ impl<B: Backend> AppState<B> {
             should_quit: false,
             status_message: None,
             confirm_modal: None,
+            show_advanced_power_modal: false,
             platform_profile,
             profile_choices,
             profile_ac,

@@ -206,6 +206,7 @@ pub struct RealBackend {
     aura: AuraProxy<'static>,
     supergfx: SuperGfxProxy<'static>,
     armoury_nodes: Vec<String>,
+    cpu_prev_stat: std::sync::Mutex<Option<(u64, u64)>>,
 }
 
 impl RealBackend {
@@ -237,6 +238,7 @@ impl RealBackend {
             aura,
             supergfx,
             armoury_nodes,
+            cpu_prev_stat: std::sync::Mutex::new(None),
         })
     }
 
@@ -553,13 +555,119 @@ impl super::Backend for RealBackend {
     async fn read_sensors(&self) -> anyhow::Result<SensorData> {
         let mut sensors = SensorData::default();
 
-        // Battery capacity & limit
+        // 1. Battery capacity & limit
         if let Ok(cap_s) = fs::read_to_string("/sys/class/power_supply/BAT0/capacity") {
             sensors.battery_charge_percent = cap_s.trim().parse::<u8>().ok();
         }
         sensors.battery_charge_limit = self.get_charge_limit().await.unwrap_or(80);
 
-        // Scan hwmon for CPU package temp and ASUS fan RPMs
+        // Extended battery telemetry
+        if let Ok(st) = fs::read_to_string("/sys/class/power_supply/BAT0/status") {
+            sensors.battery_status = st.trim().to_string();
+        }
+        if let Ok(pw) = fs::read_to_string("/sys/class/power_supply/BAT0/power_now") {
+            if let Ok(u_w) = pw.trim().parse::<f32>() {
+                sensors.battery_power_w = Some(u_w / 1_000_000.0);
+            }
+        }
+        if let (Ok(efull), Ok(edesign)) = (
+            fs::read_to_string("/sys/class/power_supply/BAT0/energy_full"),
+            fs::read_to_string("/sys/class/power_supply/BAT0/energy_full_design"),
+        ) {
+            if let (Ok(ef), Ok(ed)) = (efull.trim().parse::<u64>(), edesign.trim().parse::<u64>()) {
+                sensors.battery_health_percent = (ef * 100).checked_div(ed).map(|pct| pct.min(100) as u8);
+            }
+        }
+        if let Ok(cyc) = fs::read_to_string("/sys/class/power_supply/BAT0/cycle_count") {
+            sensors.battery_cycle_count = cyc.trim().parse::<u32>().ok();
+        }
+
+        // 2. CPU Model
+        if let Ok(cpuinfo) = fs::read_to_string("/proc/cpuinfo") {
+            for line in cpuinfo.lines() {
+                if line.starts_with("model name") {
+                    if let Some((_, model)) = line.split_once(':') {
+                        sensors.cpu_model = model.trim().to_string();
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 3. CPU Frequency (average across active cores in MHz)
+        let mut freq_sum = 0u64;
+        let mut freq_count = 0u64;
+        if let Ok(entries) = fs::read_dir("/sys/devices/system/cpu/cpufreq") {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name.to_string_lossy().starts_with("policy") {
+                    let freq_path = entry.path().join("scaling_cur_freq");
+                    if let Ok(freq_s) = fs::read_to_string(freq_path) {
+                        if let Ok(khz) = freq_s.trim().parse::<u64>() {
+                            freq_sum += khz;
+                            freq_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        sensors.cpu_freq_mhz = freq_sum.checked_div(freq_count).map(|khz| (khz / 1000) as u32);
+
+        // 4. CPU Usage % deltas from /proc/stat
+        if let Ok(stat) = fs::read_to_string("/proc/stat") {
+            if let Some(first_line) = stat.lines().next() {
+                let parts: Vec<&str> = first_line.split_whitespace().collect();
+                if parts.len() >= 5 && parts[0] == "cpu" {
+                    let user: u64 = parts[1].parse().unwrap_or(0);
+                    let nice: u64 = parts[2].parse().unwrap_or(0);
+                    let system: u64 = parts[3].parse().unwrap_or(0);
+                    let idle_raw: u64 = parts[4].parse().unwrap_or(0);
+                    let iowait: u64 = parts.get(5).and_then(|p| p.parse().ok()).unwrap_or(0);
+                    let irq: u64 = parts.get(6).and_then(|p| p.parse().ok()).unwrap_or(0);
+                    let softirq: u64 = parts.get(7).and_then(|p| p.parse().ok()).unwrap_or(0);
+                    let steal: u64 = parts.get(8).and_then(|p| p.parse().ok()).unwrap_or(0);
+
+                    let idle = idle_raw + iowait;
+                    let total = user + nice + system + idle + irq + softirq + steal;
+
+                    let mut prev_guard = self.cpu_prev_stat.lock().unwrap();
+                    if let Some((prev_idle, prev_total)) = *prev_guard {
+                        let delta_idle = idle.saturating_sub(prev_idle);
+                        let delta_total = total.saturating_sub(prev_total);
+                        sensors.cpu_usage_percent = (delta_total.saturating_sub(delta_idle) * 100)
+                            .checked_div(delta_total)
+                            .map(|usage| usage.min(100) as u8);
+                    }
+                    *prev_guard = Some((idle, total));
+                }
+            }
+        }
+
+        // 5. RAM Usage from /proc/meminfo
+        if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
+            let mut total_kb = 0u64;
+            let mut avail_kb = 0u64;
+            for line in meminfo.lines() {
+                if line.starts_with("MemTotal:") {
+                    total_kb = line.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+                } else if line.starts_with("MemAvailable:") {
+                    avail_kb = line.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+                }
+            }
+            if total_kb > 0 {
+                let total_mb = total_kb / 1024;
+                let used_mb = total_kb.saturating_sub(avail_kb) / 1024;
+                let usage_pct = ((used_mb * 100) / total_mb) as u8;
+                sensors.ram_total_mb = Some(total_mb);
+                sensors.ram_used_mb = Some(used_mb);
+                sensors.ram_usage_percent = Some(usage_pct.min(100));
+            }
+        }
+
+        // 6. iGPU Name
+        sensors.igpu_name = "Intel UHD Graphics (iHD)".to_string();
+
+        // 7. Scan hwmon for CPU package temp and ASUS fan RPMs
         if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
             for entry in entries.flatten() {
                 let p = entry.path();
@@ -570,6 +678,7 @@ impl super::Backend for RealBackend {
                         if let Ok(t) = fs::read_to_string(p.join("temp1_input")) {
                             if let Ok(val) = t.trim().parse::<u32>() {
                                 sensors.cpu_temp_c = Some(val / 1000);
+                                sensors.igpu_temp_c = Some(val / 1000);
                             }
                         }
                     } else if name == "asus" {
@@ -584,15 +693,68 @@ impl super::Backend for RealBackend {
             }
         }
 
-        // Fast NVIDIA GPU temp via nvidia-smi if dGPU is awake
-        if Path::new("/proc/driver/nvidia").exists() {
-            if let Ok(out) = Command::new("nvidia-smi")
-                .args(["--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"])
-                .output()
-            {
-                if out.status.success() {
-                    let s = String::from_utf8_lossy(&out.stdout);
-                    sensors.gpu_temp_c = s.trim().parse::<u32>().ok();
+        // 8. Dynamic dGPU Discovery: vendor 0x10de, class prefix 0x03 under /sys/bus/pci/devices
+        sensors.dgpu_name = "NVIDIA GeForce RTX 5050 Mobile".to_string();
+        let mut dgpu_found = false;
+        if let Ok(entries) = fs::read_dir("/sys/bus/pci/devices") {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                let vendor_file = p.join("vendor");
+                let class_file = p.join("class");
+                if let (Ok(v), Ok(c)) = (fs::read_to_string(&vendor_file), fs::read_to_string(&class_file)) {
+                    if v.trim() == "0x10de" && c.trim().starts_with("0x03") {
+                        dgpu_found = true;
+                        let runtime_status = fs::read_to_string(p.join("power/runtime_status"))
+                            .unwrap_or_default();
+                        let status_clean = runtime_status.trim();
+                        sensors.dgpu_power_state = status_clean.to_string();
+
+                        if status_clean == "active" {
+                            // Discrete GPU is active: safe to read without waking D3cold
+                            if Path::new("/proc/driver/nvidia").exists() {
+                                if let Ok(out) = Command::new("nvidia-smi")
+                                    .args(["--query-gpu=temperature.gpu", "--format=csv,noheader,nounits"])
+                                    .output()
+                                {
+                                    if out.status.success() {
+                                        let s = String::from_utf8_lossy(&out.stdout);
+                                        if let Ok(t) = s.trim().parse::<u32>() {
+                                            sensors.gpu_temp_c = Some(t);
+                                            sensors.dgpu_status = format!("Active ({t} C)");
+                                        } else {
+                                            sensors.dgpu_status = "Active".to_string();
+                                        }
+                                    }
+                                }
+                            }
+                            if sensors.dgpu_status.is_empty() {
+                                sensors.dgpu_status = "Active".to_string();
+                            }
+                        } else if status_clean == "suspended" {
+                            // Discrete GPU is in low-power D3cold: DO NOT wake it
+                            sensors.gpu_temp_c = None;
+                            sensors.dgpu_status = "Suspended (D3cold)".to_string();
+                        } else {
+                            sensors.gpu_temp_c = None;
+                            sensors.dgpu_status = format!("Power: {status_clean}");
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        if !dgpu_found {
+            sensors.dgpu_status = "Not detected / Off".to_string();
+            sensors.dgpu_power_state = "Off".to_string();
+        }
+
+        // Quick check for panel_overdrive and screen_auto_brightness from Armoury
+        if let Ok(attrs) = self.get_armoury_attributes().await {
+            for attr in attrs {
+                if attr.node_name == "panel_overdrive" && attr.is_available {
+                    sensors.panel_overdrive = Some(attr.current_value == 1);
+                } else if attr.node_name == "screen_auto_brightness" && attr.is_available {
+                    sensors.screen_auto_brightness = Some(attr.current_value == 1);
                 }
             }
         }

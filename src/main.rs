@@ -19,7 +19,10 @@ use backend::real::RealBackend;
 fn print_usage() {
     println!("rogtui - Minimal, fast hardware control center for ASUS ROG & TUF laptops");
     println!();
-    println!("Usage: rogtui [OPTIONS]");
+    println!("Usage: rogtui [OPTIONS] [COMMAND]");
+    println!();
+    println!("Commands:");
+    println!("  probe-modes   Sweep keyboard RGB modes 0-12 interactively to audit physical presets");
     println!();
     println!("Options:");
     println!("  --mock        Run with simulated mock hardware (for testing without daemons)");
@@ -36,6 +39,12 @@ fn main() -> anyhow::Result<()> {
     if args.iter().any(|a| a == "-v" || a == "--version") {
         println!("rogtui v0.1.0 (asusd v6.5.0 + supergfxd v5.2.7)");
         return Ok(());
+    }
+    if args.iter().any(|a| a == "probe-modes") {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        return rt.block_on(rogtui::probe::run_probe());
     }
 
     let use_mock = args.iter().any(|a| a == "--mock");

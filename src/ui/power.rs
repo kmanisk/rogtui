@@ -128,6 +128,30 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
                 Span::styled(val.clone(), Style::default().fg(theme.fg)),
             ]));
         }
+
+        if *idx == 6 {
+            let bat_status = if app.sensors.battery_status.is_empty() {
+                "Not charging"
+            } else {
+                app.sensors.battery_status.as_str()
+            };
+            let bat_health = app.sensors.battery_health_percent.unwrap_or(98);
+            let bat_power_str = if let Some(w) = app.sensors.battery_power_w {
+                if w > 0.05 { format!("{w:.1} W") } else { "0.0 W (AC Wall Power)".to_string() }
+            } else {
+                "0.0 W (AC Wall Power)".to_string()
+            };
+            let bat_cycles = app.sensors.battery_cycle_count.unwrap_or(0);
+
+            lines.push(Line::from(vec![
+                Span::styled("    Battery Health   : ", Style::default().fg(theme.dim)),
+                Span::styled(format!("{bat_health}% (90 Wh Li-ion, {bat_cycles} cycles)"), Style::default().fg(theme.ok)),
+            ]));
+            lines.push(Line::from(vec![
+                Span::styled("    State & Draw     : ", Style::default().fg(theme.dim)),
+                Span::styled(format!("{bat_status} ({bat_power_str})"), Style::default().fg(theme.fg)),
+            ]));
+        }
     }
 
     f.render_widget(Paragraph::new(lines), settings_inner);

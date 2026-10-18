@@ -312,7 +312,7 @@ impl GpuMode {
             GpuMode::NvidiaNoModeset => "NvidiaNoModeset",
             GpuMode::Vfio => "VFIO",
             GpuMode::AsusEgpu => "ASUS eGPU",
-            GpuMode::AsusMuxDgpu => "AsusMuxDgpu (Direct dGPU MUX)",
+            GpuMode::AsusMuxDgpu => "Ultimate (Direct dGPU MUX)",
             GpuMode::None => "None",
             GpuMode::Unknown => "-",
         }
@@ -563,7 +563,7 @@ impl ArmouryAttribute {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SensorData {
     pub cpu_temp_c: Option<u32>,
     pub gpu_temp_c: Option<u32>,
@@ -573,6 +573,26 @@ pub struct SensorData {
     pub battery_charge_limit: u8,
     pub panel_overdrive: Option<bool>,
     pub gpu_mux_mode: Option<bool>,
+
+    // Phase 2 Hardware Telemetry
+    pub cpu_model: String,
+    pub cpu_freq_mhz: Option<u32>,
+    pub cpu_usage_percent: Option<u8>,
+    pub ram_used_mb: Option<u64>,
+    pub ram_total_mb: Option<u64>,
+    pub ram_usage_percent: Option<u8>,
+    pub igpu_name: String,
+    pub igpu_temp_c: Option<u32>,
+    pub dgpu_name: String,
+    pub dgpu_status: String,
+    pub dgpu_power_state: String,
+
+    // Battery Extended Telemetry
+    pub battery_status: String,
+    pub battery_power_w: Option<f32>,
+    pub battery_health_percent: Option<u8>,
+    pub battery_cycle_count: Option<u32>,
+    pub screen_auto_brightness: Option<bool>,
 }
 
 #[cfg(test)]
