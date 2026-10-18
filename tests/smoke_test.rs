@@ -363,7 +363,17 @@ async fn test_software_effects_and_color_logic() {
     let low = AppState::<MockBackend>::compute_battery_color(Some(10), "Discharging");
     assert_eq!(low, RgbColor::new(220, 0, 0));
 
-    // 4. App state effect apply & deduplication
+    // 4. CPU Load colors
+    let cool_load = AppState::<MockBackend>::compute_cpu_load_color(Some(15));
+    assert_eq!(cool_load, RgbColor::new(0, 220, 0));
+    let mod_load = AppState::<MockBackend>::compute_cpu_load_color(Some(50));
+    assert_eq!(mod_load, RgbColor::new(220, 220, 0));
+    let heavy_load = AppState::<MockBackend>::compute_cpu_load_color(Some(75));
+    assert_eq!(heavy_load, RgbColor::new(255, 120, 0));
+    let peak_load = AppState::<MockBackend>::compute_cpu_load_color(Some(90));
+    assert_eq!(peak_load, RgbColor::new(255, 0, 0));
+
+    // 5. App state effect apply & deduplication
     let backend = MockBackend::new();
     let mut app = AppState::new(backend).await.expect("app init");
     app.aura_brightness = 2;
@@ -379,7 +389,34 @@ async fn test_software_effects_and_color_logic() {
     app.apply_software_effect().await;
     assert_eq!(app.last_effect_color, col1);
 
-    // Brightness 0 guardrail -> no-op
+    // 6. Custom Animations: Rainbow Wave advances hue
+    app.active_software_effect = SoftwareEffect::RainbowWave;
+    app.aura_data.speed = "med".to_string();
+    app.aura_data.direction = "Right".to_string();
+    app.apply_software_effect().await;
+    let rw_col1 = app.last_effect_color.expect("rainbow wave color 1");
+    app.apply_software_effect().await;
+    let rw_col2 = app.last_effect_color.expect("rainbow wave color 2");
+    assert_ne!(rw_col1, rw_col2, "Rainbow wave must advance on each tick");
+
+    // 7. Custom Animations: Color Cycle advances index
+    app.active_software_effect = SoftwareEffect::ColorCycle;
+    app.apply_software_effect().await;
+    let cc_col1 = app.last_effect_color.expect("color cycle 1");
+    app.apply_software_effect().await;
+    let cc_col2 = app.last_effect_color.expect("color cycle 2");
+    assert_ne!(cc_col1, cc_col2, "Color cycle must step to next color");
+
+    // 8. Custom Animations: Strobe alternates
+    app.active_software_effect = SoftwareEffect::Strobe;
+    app.aura_data.color1 = RgbColor::new(0, 255, 255);
+    app.apply_software_effect().await;
+    let str_col1 = app.last_effect_color.expect("strobe color 1");
+    app.apply_software_effect().await;
+    let str_col2 = app.last_effect_color.expect("strobe color 2");
+    assert_ne!(str_col1, str_col2, "Strobe must alternate between color and black");
+
+    // 9. Brightness 0 guardrail -> silences all effects
     app.aura_brightness = 0;
     app.last_effect_color = None;
     app.apply_software_effect().await;

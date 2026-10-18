@@ -713,7 +713,12 @@ fn next_aura_field(current: usize, dir: i32, brightness: u32) -> usize {
     let accessible: &[usize] = if brightness == 0 {
         &[0, 9, 10, 11, 12]
     } else {
-        &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        &[
+            0, 1, 7, 8,                     // Panel 1: Brightness, Mode, Speed, Direction
+            2, 3, 4, 5, 6,                  // Panel 2: Color 1, R, G, B, Color 2
+            13, 14, 15, 16, 17, 18, 19, 20, // Panel 3: Custom Effects (Animations 13-16, Telemetry 17-20)
+            9, 10, 11, 12,                  // Panel 4: Hardware Power States
+        ]
     };
 
     let cur_pos = accessible.iter().position(|&f| f == current).unwrap_or(0);
@@ -769,9 +774,29 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
     }
 }
 
+async fn activate_software_mode<B: Backend>(app: &mut AppState<B>, effect: SoftwareEffect, status_msg: &str) {
+    app.active_software_effect = effect;
+    app.last_effect_color = None;
+    app.aura_mode = 0;
+    app.aura_data.mode = 0;
+    let _ = app.backend.set_aura_mode(0).await;
+    app.apply_software_effect().await;
+    app.set_status(status_msg, false);
+}
+
+async fn toggle_custom_effect<B: Backend>(app: &mut AppState<B>, effect: SoftwareEffect, desc: &str) {
+    if app.active_software_effect == effect {
+        app.active_software_effect = SoftwareEffect::None;
+        app.last_effect_color = None;
+        app.set_status(format!("{} deactivated", effect.label()), false);
+    } else {
+        activate_software_mode(app, effect, &format!("{} active: {}", effect.label(), desc)).await;
+    }
+}
+
 async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
     // Guardrail: if brightness is Off (0), block all effect and color configuration
-    if app.aura_brightness == 0 && (1..=8).contains(&app.aura_selected_field) {
+    if app.aura_brightness == 0 && ((1..=8).contains(&app.aura_selected_field) || (13..=20).contains(&app.aura_selected_field)) {
         app.set_status("Backlight is Off. Increase brightness to access effects.", true);
         return;
     }
@@ -794,7 +819,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let _ = app.backend.set_aura_brightness(b).await;
             if b == 0 {
                 // Brightness off: move focus back to brightness row and stop any software effect
-                if (1..=15).contains(&app.aura_selected_field) {
+                if (1..=20).contains(&app.aura_selected_field) {
                     app.aura_selected_field = 0;
                 }
                 app.active_software_effect = SoftwareEffect::None;
@@ -802,18 +827,70 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             }
         }
         1 => {
-            let modes = [0, 1, 2, 10];
-            let cur_idx = modes.iter().position(|m| *m == app.aura_mode).unwrap_or(0);
-            let next_idx = ((cur_idx as i32 + dir + 4) % 4) as usize;
-            app.aura_mode = modes[next_idx];
-            app.aura_data.mode = modes[next_idx];
-            let _ = app.backend.set_aura_mode(modes[next_idx]).await;
-            if app.aura_mode == 0 {
-                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            let current_idx = match app.active_software_effect {
+                SoftwareEffect::RainbowWave => 4,
+                SoftwareEffect::ColorCycle => 5,
+                SoftwareEffect::FireFlicker => 6,
+                SoftwareEffect::Strobe => 7,
+                SoftwareEffect::Heatmap => 8,
+                SoftwareEffect::GpuMode => 9,
+                SoftwareEffect::BatteryStatus => 10,
+                SoftwareEffect::CpuLoad => 11,
+                SoftwareEffect::None => match app.aura_mode {
+                    1 => 1,
+                    2 => 2,
+                    10 => 3,
+                    _ => 0,
+                },
+            };
+            let next_idx = ((current_idx + dir + 12) % 12) as usize;
+            match next_idx {
+                0 => {
+                    app.active_software_effect = SoftwareEffect::None;
+                    app.last_effect_color = None;
+                    app.aura_mode = 0;
+                    app.aura_data.mode = 0;
+                    let _ = app.backend.set_aura_mode(0).await;
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    app.set_status("Aura Mode: Static", false);
+                }
+                1 => {
+                    app.active_software_effect = SoftwareEffect::None;
+                    app.last_effect_color = None;
+                    app.aura_mode = 1;
+                    app.aura_data.mode = 1;
+                    let _ = app.backend.set_aura_mode(1).await;
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    app.set_status("Aura Mode: Breathe", false);
+                }
+                2 => {
+                    app.active_software_effect = SoftwareEffect::None;
+                    app.last_effect_color = None;
+                    app.aura_mode = 2;
+                    app.aura_data.mode = 2;
+                    let _ = app.backend.set_aura_mode(2).await;
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    app.set_status("Aura Mode: Rainbow Cycle", false);
+                }
+                3 => {
+                    app.active_software_effect = SoftwareEffect::None;
+                    app.last_effect_color = None;
+                    app.aura_mode = 10;
+                    app.aura_data.mode = 10;
+                    let _ = app.backend.set_aura_mode(10).await;
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    app.set_status("Aura Mode: Pulse", false);
+                }
+                4 => activate_software_mode(app, SoftwareEffect::RainbowWave, "Rainbow Wave active (360° spectrum sweep)").await,
+                5 => activate_software_mode(app, SoftwareEffect::ColorCycle, "Color Cycle active (7 primary colors)").await,
+                6 => activate_software_mode(app, SoftwareEffect::FireFlicker, "Fire Flicker active (fireplace embers)").await,
+                7 => activate_software_mode(app, SoftwareEffect::Strobe, "Strobe / Flash active (pulsing pulse)").await,
+                8 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
+                9 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
+                10 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
+                11 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
+                _ => {}
             }
-            // Selecting a firmware mode deactivates any software effect
-            app.active_software_effect = SoftwareEffect::None;
-            app.last_effect_color = None;
         }
         2 => {
             let cur_pos = presets.iter().position(|p| *p == app.aura_data.color1).unwrap_or(0);
@@ -880,42 +957,14 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             app.aura_power.shutdown = !app.aura_power.shutdown;
             let _ = app.backend.set_aura_power(&app.aura_power).await;
         }
-        // Software effect fields: toggle on/off.
-        // Selecting a new effect deactivates the previous one and resets the cache
-        // so the next ticker tick writes immediately.
-        13 => {
-            if app.active_software_effect == SoftwareEffect::Heatmap {
-                app.active_software_effect = SoftwareEffect::None;
-                app.last_effect_color = None;
-                app.set_status("Heatmap effect deactivated", false);
-            } else {
-                app.active_software_effect = SoftwareEffect::Heatmap;
-                app.last_effect_color = None;
-                app.set_status("Heatmap effect active (CPU/GPU temp -> keyboard color)", false);
-            }
-        }
-        14 => {
-            if app.active_software_effect == SoftwareEffect::GpuMode {
-                app.active_software_effect = SoftwareEffect::None;
-                app.last_effect_color = None;
-                app.set_status("GPU Mode Indicator deactivated", false);
-            } else {
-                app.active_software_effect = SoftwareEffect::GpuMode;
-                app.last_effect_color = None;
-                app.set_status("GPU Mode Indicator active (GPU mode -> keyboard color)", false);
-            }
-        }
-        15 => {
-            if app.active_software_effect == SoftwareEffect::BatteryStatus {
-                app.active_software_effect = SoftwareEffect::None;
-                app.last_effect_color = None;
-                app.set_status("Battery Status effect deactivated", false);
-            } else {
-                app.active_software_effect = SoftwareEffect::BatteryStatus;
-                app.last_effect_color = None;
-                app.set_status("Battery Status effect active (charge state -> keyboard color)", false);
-            }
-        }
+        13 => toggle_custom_effect(app, SoftwareEffect::RainbowWave, "360° spectrum sweep").await,
+        14 => toggle_custom_effect(app, SoftwareEffect::ColorCycle, "7 primary colors").await,
+        15 => toggle_custom_effect(app, SoftwareEffect::FireFlicker, "fireplace embers").await,
+        16 => toggle_custom_effect(app, SoftwareEffect::Strobe, "pulsing pulse").await,
+        17 => toggle_custom_effect(app, SoftwareEffect::Heatmap, "CPU/GPU temp -> color").await,
+        18 => toggle_custom_effect(app, SoftwareEffect::GpuMode, "GPU mode -> color").await,
+        19 => toggle_custom_effect(app, SoftwareEffect::BatteryStatus, "charge state -> color").await,
+        20 => toggle_custom_effect(app, SoftwareEffect::CpuLoad, "load % -> color").await,
         _ => {}
     }
 }

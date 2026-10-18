@@ -2,32 +2,78 @@ use serde::{Deserialize, Serialize};
 
 /// Software-driven RGB lighting effects that run on the 1 Hz ticker.
 /// These write static colors to the keyboard via the asusd DBus interface.
-/// They are distinct from hardware/firmware effects (Static, Breathe, etc.)
+/// They are distinct from hardware/firmware effects (Static, Breathe, Rainbow Cycle, Pulse)
 /// and only active while brightness > 0 and the effect is selected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SoftwareEffect {
     None,
-    /// Maps max(CPU temp, GPU temp) to a blue -> yellow -> red gradient.
+    // Custom Animations
+    RainbowWave,
+    ColorCycle,
+    FireFlicker,
+    Strobe,
+    // System Telemetry
     Heatmap,
-    /// Keyboard color reflects the current supergfx GPU operating mode.
     GpuMode,
-    /// Keyboard color reflects battery charge state and direction.
     BatteryStatus,
+    CpuLoad,
 }
 
 impl SoftwareEffect {
+    pub fn all_custom() -> &'static [SoftwareEffect] {
+        &[
+            SoftwareEffect::RainbowWave,
+            SoftwareEffect::ColorCycle,
+            SoftwareEffect::FireFlicker,
+            SoftwareEffect::Strobe,
+            SoftwareEffect::Heatmap,
+            SoftwareEffect::GpuMode,
+            SoftwareEffect::BatteryStatus,
+            SoftwareEffect::CpuLoad,
+        ]
+    }
+
+    pub fn is_animated(self) -> bool {
+        matches!(
+            self,
+            SoftwareEffect::RainbowWave
+                | SoftwareEffect::ColorCycle
+                | SoftwareEffect::FireFlicker
+                | SoftwareEffect::Strobe
+        )
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             SoftwareEffect::None => "None",
+            SoftwareEffect::RainbowWave => "Rainbow Wave",
+            SoftwareEffect::ColorCycle => "Color Cycle",
+            SoftwareEffect::FireFlicker => "Fire Flicker",
+            SoftwareEffect::Strobe => "Strobe / Flash",
             SoftwareEffect::Heatmap => "Heatmap",
             SoftwareEffect::GpuMode => "GPU Mode Indicator",
             SoftwareEffect::BatteryStatus => "Battery Status",
+            SoftwareEffect::CpuLoad => "CPU Load Indicator",
         }
     }
 
     pub fn description(self) -> &'static str {
         match self {
             SoftwareEffect::None => "No software effect active.",
+            SoftwareEffect::RainbowWave => {
+                "Smooth continuous spectrum sweep across the full 360° color wheel.\n\
+                 Rotates hue continuously based on Animation Speed and Direction."
+            }
+            SoftwareEffect::ColorCycle => {
+                "Sequentially transitions through 7 distinct primary colors.\n\
+                 Steps at interval defined by Animation Speed and Direction."
+            }
+            SoftwareEffect::FireFlicker => {
+                "Simulates warm fireplace embers with shifting amber, orange, and red tones."
+            }
+            SoftwareEffect::Strobe => {
+                "High-contrast blinking pulse between Primary Color and black."
+            }
             SoftwareEffect::Heatmap => {
                 "Maps CPU/GPU temperature to keyboard color.\n\
                  Blue (cool) -> Yellow (warm) -> Red (hot).\n\
@@ -40,6 +86,10 @@ impl SoftwareEffect {
             SoftwareEffect::BatteryStatus => {
                 "Reflects battery charge state:\n\
                  Green = charging, Yellow = discharging, Red = low (<20%)."
+            }
+            SoftwareEffect::CpuLoad => {
+                "Reflects real-time processor workload:\n\
+                 Green (<30%) -> Yellow (30-65%) -> Orange (65-85%) -> Red (>85%)."
             }
         }
     }
@@ -440,7 +490,7 @@ pub struct RgbColor {
 }
 
 impl RgbColor {
-    pub fn new(r: u8, g: u8, b: u8) -> Self {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 

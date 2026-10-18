@@ -145,6 +145,10 @@ pub struct AppState<B: Backend> {
     pub active_software_effect: SoftwareEffect,
     /// Last color written to hardware; prevents redundant DBus writes when color unchanged.
     pub last_effect_color: Option<RgbColor>,
+    pub rainbow_wave_hue: f32,
+    pub color_cycle_idx: usize,
+    pub strobe_state: bool,
+    pub flicker_seed: u32,
 
     // Armoury Attributes State
     pub armoury_attributes: Vec<ArmouryAttribute>,
@@ -271,6 +275,10 @@ impl<B: Backend> AppState<B> {
             picker_initial_color: RgbColor::new(0, 200, 255),
             active_software_effect: SoftwareEffect::None,
             last_effect_color: None,
+            rainbow_wave_hue: 0.0,
+            color_cycle_idx: 0,
+            strobe_state: false,
+            flicker_seed: 1234567,
             armoury_attributes,
             armoury_selected_idx: 0,
             show_unavailable_armoury: false,
@@ -472,15 +480,96 @@ impl<B: Backend> AppState<B> {
         }
     }
 
+    /// Map CPU usage percent to color.
+    pub fn compute_cpu_load_color(usage_pct: Option<u8>) -> RgbColor {
+        match usage_pct {
+            Some(u) if u < 30 => RgbColor::new(0, 220, 0),      // Green: cool idle/light (<30%)
+            Some(u) if u < 65 => RgbColor::new(220, 220, 0),    // Yellow: moderate (30-65%)
+            Some(u) if u < 85 => RgbColor::new(255, 120, 0),    // Orange: heavy (65-85%)
+            Some(_)           => RgbColor::new(255, 0, 0),      // Red: peak load (>85%)
+            None              => RgbColor::new(80, 80, 80),     // Dim: unknown
+        }
+    }
+
+    /// Compute the next hue and color for Rainbow Wave.
+    pub fn compute_rainbow_wave_color(&mut self) -> RgbColor {
+        let speed_deg = match self.aura_data.speed.to_ascii_lowercase().as_str() {
+            "low" => 15.0,
+            "high" => 60.0,
+            _ => 30.0,
+        };
+        let dir_mult = if self.aura_data.direction.eq_ignore_ascii_case("left") {
+            -1.0
+        } else {
+            1.0
+        };
+        self.rainbow_wave_hue = (self.rainbow_wave_hue + dir_mult * speed_deg + 360.0) % 360.0;
+        RgbColor::from_hsv(self.rainbow_wave_hue, 100.0, 100.0)
+    }
+
+    /// Compute the next step for Color Cycle (7 primary colors).
+    pub fn compute_color_cycle_color(&mut self) -> RgbColor {
+        const CYCLE_COLORS: [RgbColor; 7] = [
+            RgbColor::new(255, 0, 0),     // Red
+            RgbColor::new(255, 128, 0),   // Orange
+            RgbColor::new(255, 255, 0),   // Yellow
+            RgbColor::new(0, 255, 0),     // Green
+            RgbColor::new(0, 255, 255),   // Cyan
+            RgbColor::new(0, 0, 255),     // Blue
+            RgbColor::new(255, 0, 255),   // Magenta
+        ];
+        let step = if self.aura_data.direction.eq_ignore_ascii_case("left") {
+            6
+        } else {
+            1
+        };
+        self.color_cycle_idx = (self.color_cycle_idx + step) % CYCLE_COLORS.len();
+        CYCLE_COLORS[self.color_cycle_idx]
+    }
+
+    /// Compute warm flickering fireplace ember color.
+    pub fn compute_fire_flicker_color(&mut self) -> RgbColor {
+        // LCG PRNG for organic flame variance
+        self.flicker_seed = self.flicker_seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let rand1 = ((self.flicker_seed >> 16) & 0xFF) as u8;
+        self.flicker_seed = self.flicker_seed.wrapping_mul(1103515245).wrapping_add(12345);
+        let rand2 = ((self.flicker_seed >> 16) & 0xFF) as u8;
+
+        let r = 220 + (rand1 % 36);
+        let g = 40 + (rand2 % 71);
+        let b = rand1 % 16;
+        RgbColor::new(r, g, b)
+    }
+
+    /// Compute high-contrast strobe pulse.
+    pub fn compute_strobe_color(&mut self) -> RgbColor {
+        self.strobe_state = !self.strobe_state;
+        if self.strobe_state {
+            if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
+                RgbColor::new(255, 255, 255)
+            } else {
+                self.aura_data.color1
+            }
+        } else {
+            RgbColor::new(0, 0, 0)
+        }
+    }
+
     /// Apply the active software effect to the keyboard via asusd DBus.
     /// No-op if brightness is Off (0) or effect is None.
-    /// Only writes to hardware when the computed color changes.
+    /// Only writes to hardware when the computed color changes (for telemetry effects)
+    /// or on every tick for animated effects.
     pub async fn apply_software_effect(&mut self) {
         if self.aura_brightness == 0 || self.active_software_effect == SoftwareEffect::None {
             return;
         }
 
+        let is_animated = self.active_software_effect.is_animated();
         let color = match self.active_software_effect {
+            SoftwareEffect::RainbowWave => self.compute_rainbow_wave_color(),
+            SoftwareEffect::ColorCycle => self.compute_color_cycle_color(),
+            SoftwareEffect::FireFlicker => self.compute_fire_flicker_color(),
+            SoftwareEffect::Strobe => self.compute_strobe_color(),
             SoftwareEffect::Heatmap => {
                 Self::compute_heatmap_color(self.sensors.cpu_temp_c, self.sensors.gpu_temp_c)
             }
@@ -493,11 +582,14 @@ impl<B: Backend> AppState<B> {
                     &self.sensors.battery_status.clone(),
                 )
             }
+            SoftwareEffect::CpuLoad => {
+                Self::compute_cpu_load_color(self.sensors.cpu_usage_percent)
+            }
             SoftwareEffect::None => return,
         };
 
-        // Deduplicate: skip DBus write if color has not changed
-        if self.last_effect_color == Some(color) {
+        // Deduplicate telemetry effects: skip DBus write if color has not changed
+        if !is_animated && self.last_effect_color == Some(color) {
             return;
         }
         self.last_effect_color = Some(color);

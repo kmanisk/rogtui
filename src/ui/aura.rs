@@ -34,7 +34,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         .constraints([
             Constraint::Length(6), // Effect & Brightness
             Constraint::Length(6), // Colours
-            Constraint::Length(5), // Software Effects (1 Hz Live Sync)
+            Constraint::Length(6), // Custom Software Effects (1 Hz Live Sync)
             Constraint::Length(3), // Power States
             Constraint::Min(0),
         ])
@@ -59,12 +59,22 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         _ => "███",
     };
 
-    let mode_str = match app.aura_mode {
-        0 => "Static",
-        1 => "Breathe",
-        2 => "Rainbow Cycle",
-        10 => "Pulse",
-        _ => "Custom",
+    let mode_str = match app.active_software_effect {
+        SoftwareEffect::RainbowWave => "Rainbow Wave (Custom)",
+        SoftwareEffect::ColorCycle => "Color Cycle (Custom)",
+        SoftwareEffect::FireFlicker => "Fire Flicker (Custom)",
+        SoftwareEffect::Strobe => "Strobe / Flash (Custom)",
+        SoftwareEffect::Heatmap => "Heatmap (Telemetry)",
+        SoftwareEffect::GpuMode => "GPU Mode (Telemetry)",
+        SoftwareEffect::BatteryStatus => "Battery Status (Telemetry)",
+        SoftwareEffect::CpuLoad => "CPU Load (Telemetry)",
+        SoftwareEffect::None => match app.aura_mode {
+            0 => "Static",
+            1 => "Breathe",
+            2 => "Rainbow Cycle",
+            10 => "Pulse",
+            _ => "Custom",
+        },
     };
 
     let eff_fields = [
@@ -169,44 +179,91 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
 
     f.render_widget(Paragraph::new(col_lines), col_inner);
 
-    // 3. Software Effects Panel (1 Hz Live Sync)
+    // 3. Custom Software Effects Panel (1 Hz Live Sync)
     let sw_block = panel_block(
-        " Software Effects (1 Hz Live Sync) ",
-        (13..=15).contains(&app.aura_selected_field),
+        " Custom Software Effects (1 Hz Live Sync) ",
+        (13..=20).contains(&app.aura_selected_field),
         theme,
     );
     let sw_inner = sw_block.inner(left_chunks[2]);
     f.render_widget(sw_block, left_chunks[2]);
 
-    let sw_fields = [
-        (13, "Heatmap (CPU/GPU Temp -> Color)", app.active_software_effect == SoftwareEffect::Heatmap),
-        (14, "GPU Mode Indicator", app.active_software_effect == SoftwareEffect::GpuMode),
-        (15, "Battery Status", app.active_software_effect == SoftwareEffect::BatteryStatus),
+    let col_w = (sw_inner.width / 2) as usize;
+    let right_w = (sw_inner.width as usize).saturating_sub(col_w);
+
+    type EffectItem = (usize, &'static str, SoftwareEffect);
+
+    // Left column: Animations (13..=16)
+    // Right column: Telemetry (17..=20)
+    let rows: [(EffectItem, EffectItem); 4] = [
+        (
+            (13, "Rainbow Wave", SoftwareEffect::RainbowWave),
+            (17, "Heatmap (Temp)", SoftwareEffect::Heatmap),
+        ),
+        (
+            (14, "Color Cycle", SoftwareEffect::ColorCycle),
+            (18, "GPU Mode Indicator", SoftwareEffect::GpuMode),
+        ),
+        (
+            (15, "Fire Flicker", SoftwareEffect::FireFlicker),
+            (19, "Battery Status", SoftwareEffect::BatteryStatus),
+        ),
+        (
+            (16, "Strobe / Flash", SoftwareEffect::Strobe),
+            (20, "CPU Load Indicator", SoftwareEffect::CpuLoad),
+        ),
     ];
 
     let mut sw_lines = Vec::new();
-    for (f_idx, label, is_active) in sw_fields {
-        let is_sel = app.aura_selected_field == f_idx;
-        let status_tag = if is_active { "[x] Active" } else { "[ ] Inactive" };
-        let row_str = format!("  {label: <34}: {status_tag}");
-        let w = sw_inner.width as usize;
-        let padded = if row_str.len() < w { format!("{}{}", row_str, " ".repeat(w - row_str.len())) } else { row_str };
+    for ((l_idx, l_label, l_eff), (r_idx, r_label, r_eff)) in rows {
+        let l_active = app.active_software_effect == l_eff;
+        let r_active = app.active_software_effect == r_eff;
+        let l_sel = app.aura_selected_field == l_idx;
+        let r_sel = app.aura_selected_field == r_idx;
 
-        if is_sel && !is_off {
-            sw_lines.push(Line::from(Span::styled(padded, theme.sel_style())));
-        } else if is_off {
-            sw_lines.push(Line::from(Span::styled(padded, Style::default().fg(theme.dim))));
+        let l_tag = if l_active { "[x]" } else { "[ ]" };
+        let r_tag = if r_active { "[x]" } else { "[ ]" };
+
+        let l_text = format!(" {l_tag} {l_label}");
+        let r_text = format!(" {r_tag} {r_label}");
+
+        let l_padded = if l_text.len() < col_w {
+            format!("{}{}", l_text, " ".repeat(col_w - l_text.len()))
+        } else if col_w > 0 {
+            l_text.chars().take(col_w).collect()
         } else {
-            let tag_style = if is_active {
-                Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.dim)
-            };
-            sw_lines.push(Line::from(vec![
-                Span::styled(format!("  {label: <34}: "), Style::default().fg(theme.fg)),
-                Span::styled(status_tag, tag_style),
-            ]));
-        }
+            String::new()
+        };
+
+        let r_padded = if r_text.len() < right_w {
+            format!("{}{}", r_text, " ".repeat(right_w - r_text.len()))
+        } else if right_w > 0 {
+            r_text.chars().take(right_w).collect()
+        } else {
+            String::new()
+        };
+
+        let l_span = if l_sel && !is_off {
+            Span::styled(l_padded, theme.sel_style())
+        } else if is_off {
+            Span::styled(l_padded, Style::default().fg(theme.dim))
+        } else if l_active {
+            Span::styled(l_padded, Style::default().fg(theme.ok).add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled(l_padded, Style::default().fg(theme.fg))
+        };
+
+        let r_span = if r_sel && !is_off {
+            Span::styled(r_padded, theme.sel_style())
+        } else if is_off {
+            Span::styled(r_padded, Style::default().fg(theme.dim))
+        } else if r_active {
+            Span::styled(r_padded, Style::default().fg(theme.ok).add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled(r_padded, Style::default().fg(theme.fg))
+        };
+
+        sw_lines.push(Line::from(vec![l_span, r_span]));
     }
     f.render_widget(Paragraph::new(sw_lines), sw_inner);
 
@@ -248,6 +305,22 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         f.render_widget(details_block, chunks[1]);
 
         let (active_title, active_desc) = match app.active_software_effect {
+            SoftwareEffect::RainbowWave => (
+                "Software Effect: Rainbow Wave",
+                "Smooth continuous spectrum sweep across the full 360° color wheel.\n  Rotates hue continuously based on Animation Speed and Direction.\n  Volatile updates written via DBus at 1 Hz.",
+            ),
+            SoftwareEffect::ColorCycle => (
+                "Software Effect: Color Cycle",
+                "Sequentially transitions through 7 distinct primary colors.\n  Steps at interval defined by Animation Speed and Direction.\n  Volatile updates written via DBus at 1 Hz.",
+            ),
+            SoftwareEffect::FireFlicker => (
+                "Software Effect: Fire Flicker",
+                "Simulates warm fireplace embers with shifting amber, orange, and red tones.\n  Generates organic color variance on each tick.\n  Volatile updates written via DBus at 1 Hz.",
+            ),
+            SoftwareEffect::Strobe => (
+                "Software Effect: Strobe / Flash",
+                "High-contrast blinking pulse alternating between Primary Color and black.\n  Creates a rhythmic flash effect without saving to BIOS flash.",
+            ),
             SoftwareEffect::Heatmap => (
                 "Software Effect: Heatmap (Live CPU/GPU Temp)",
                 "Maps highest component temperature to smooth RGB gradient:\n  Cool (<30C) -> Blue | Warm (60C) -> Yellow | Hot (>=90C) -> Red.\n  Volatile updates written via DBus at 1 Hz.",
@@ -260,16 +333,30 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
                 "Software Effect: Battery Status",
                 "Color reflects battery charge level and state:\n  Charging -> Bright Green | Low (<20%) -> Red | Balanced -> Teal.\n  Monitors live ACPI battery state at 1 Hz.",
             ),
-            SoftwareEffect::None => (
-                mode_str,
-                match app.aura_mode {
-                    0 => "Static: Displays a continuous solid color across the entire keyboard matrix.",
-                    1 => "Breathe: Smooth sinusoidal pulsing transition between Color 1 and Color 2.",
-                    2 => "Rainbow Cycle: Continuous spectral progression through the full RGB color wheel.",
-                    10 => "Pulse: Rhythmic strobe pulses at the specified animation speed.",
-                    _ => "Custom effect.",
-                },
+            SoftwareEffect::CpuLoad => (
+                "Software Effect: CPU Load Indicator",
+                "Keyboard color dynamically reflects real-time CPU utilization:\n  Idle (<30%) -> Green | Moderate (30-65%) -> Yellow | Peak (>85%) -> Red.\n  Volatile updates written via DBus at 1 Hz.",
             ),
+            SoftwareEffect::None => match app.aura_selected_field {
+                13 => ("Preview: Rainbow Wave", "Smooth continuous spectrum sweep across the full 360° color wheel.\n  Press Enter or Space to activate."),
+                14 => ("Preview: Color Cycle", "Sequentially transitions through 7 distinct primary colors.\n  Press Enter or Space to activate."),
+                15 => ("Preview: Fire Flicker", "Simulates warm fireplace embers with shifting amber, orange, and red tones.\n  Press Enter or Space to activate."),
+                16 => ("Preview: Strobe / Flash", "High-contrast blinking pulse alternating between Primary Color and black.\n  Press Enter or Space to activate."),
+                17 => ("Preview: Heatmap (Temp)", "Maps CPU/GPU temperature to keyboard color.\n  Press Enter or Space to activate."),
+                18 => ("Preview: GPU Mode", "Keyboard color reflects current GPU operating mode.\n  Press Enter or Space to activate."),
+                19 => ("Preview: Battery Status", "Keyboard color reflects battery charge state and direction.\n  Press Enter or Space to activate."),
+                20 => ("Preview: CPU Load", "Keyboard color reflects processor workload percentage.\n  Press Enter or Space to activate."),
+                _ => (
+                    mode_str,
+                    match app.aura_mode {
+                        0 => "Static: Displays a continuous solid color across the entire keyboard matrix.",
+                        1 => "Breathe: Smooth sinusoidal pulsing transition between Color 1 and Color 2.",
+                        2 => "Rainbow Cycle: Continuous spectral progression through the full RGB color wheel.",
+                        10 => "Pulse: Rhythmic strobe pulses at the specified animation speed.",
+                        _ => "Custom effect.",
+                    },
+                ),
+            },
         };
 
         let mut right_lines = vec![
