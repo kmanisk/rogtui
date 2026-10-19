@@ -261,6 +261,22 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
             app.current_tab = app.current_tab.prev();
             return;
         }
+        KeyCode::Char('J') => {
+            app.current_tab = app.current_tab.next();
+            return;
+        }
+        KeyCode::Char('K') => {
+            app.current_tab = app.current_tab.prev();
+            return;
+        }
+        KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.current_tab = app.current_tab.next();
+            return;
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            app.current_tab = app.current_tab.prev();
+            return;
+        }
         KeyCode::Char('1') => { app.current_tab = ActiveTab::Dashboard; return; }
         KeyCode::Char('2') => { app.current_tab = ActiveTab::Power; return; }
         KeyCode::Char('3') => { app.current_tab = ActiveTab::FanCurves; return; }
@@ -320,7 +336,9 @@ async fn handle_dashboard<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
 }
 
 async fn handle_system<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
-    let max_rows = 3;
+    let has_auto_bright = app.sensors.screen_auto_brightness.is_some();
+    let max_rows = if has_auto_bright { 3 } else { 2 };
+    let export_row = if has_auto_bright { 2 } else { 1 };
 
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
@@ -330,7 +348,7 @@ async fn handle_system<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             app.system_selected_row = (app.system_selected_row + max_rows - 1) % max_rows;
         }
         KeyCode::Left | KeyCode::Char('h') | KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
-            if app.system_selected_row == 2 {
+            if app.system_selected_row == export_row {
                 export_system_report(app);
             } else {
                 toggle_system_row(app).await;
@@ -344,6 +362,7 @@ async fn handle_system<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
 }
 
 async fn toggle_system_row<B: Backend>(app: &mut AppState<B>) {
+    let has_auto_bright = app.sensors.screen_auto_brightness.is_some();
     match app.system_selected_row {
         0 => {
             let cur = app.sensors.panel_overdrive.unwrap_or(true);
@@ -355,11 +374,18 @@ async fn toggle_system_row<B: Backend>(app: &mut AppState<B>) {
                 app.set_status(format!("Panel Overdrive {}", if next_val == 1 { "enabled" } else { "disabled" }), false);
             }
         }
-        1 => {
+        1 if has_auto_bright => {
             let cur = app.sensors.screen_auto_brightness.unwrap_or(false);
             let next_val = if cur { 0 } else { 1 };
             if let Err(e) = app.backend.set_armoury_attribute("screen_auto_brightness", next_val).await {
-                app.set_status(format!("Failed to toggle Auto-Brightness: {e}"), true);
+                let msg = e.to_string();
+                if msg.contains("Input/output error") || msg.contains("os error 5") {
+                    app.sensors.screen_auto_brightness = None;
+                    app.system_selected_row = 0;
+                    app.set_status("Auto-Brightness is not supported on this hardware", true);
+                } else {
+                    app.set_status(format!("Failed to toggle Auto-Brightness: {e}"), true);
+                }
             } else {
                 app.sensors.screen_auto_brightness = Some(next_val == 1);
                 app.set_status(format!("Auto-Brightness {}", if next_val == 1 { "enabled" } else { "disabled" }), false);
@@ -563,48 +589,57 @@ fn cycle_profile(current: PlatformProfile, dir: i32) -> PlatformProfile {
 
 async fn handle_fancurve<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
     match key.code {
-        // Point selection: h/l or Left/Right (without Shift)
-        KeyCode::Left | KeyCode::Char('h') if !key.modifiers.contains(KeyModifiers::SHIFT) => {
-            app.active_point_idx = (app.active_point_idx + 7) % 8;
-        }
-        KeyCode::Right | KeyCode::Char('l') if !key.modifiers.contains(KeyModifiers::SHIFT) => {
+        // Point selection: j/k or Down/Up (vertical navigation between rows 1..8)
+        KeyCode::Down | KeyCode::Char('j') => {
             app.active_point_idx = (app.active_point_idx + 1) % 8;
         }
-
-        // Adjust speed: j/k or Up/Down (+/-1%, hold Shift for +/-5%)
         KeyCode::Up | KeyCode::Char('k') => {
-            let delta = if key.modifiers.contains(KeyModifiers::SHIFT) { 5 } else { 1 };
-            adjust_fancurve_speed(app, delta);
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            let delta = if key.modifiers.contains(KeyModifiers::SHIFT) { -5 } else { -1 };
-            adjust_fancurve_speed(app, delta);
+            app.active_point_idx = (app.active_point_idx + 7) % 8;
         }
 
-        // Adjust temperature: H/L or Shift+Left/Right (+/-1 C, hold Alt for +/-5 C)
-        KeyCode::Char('H') => {
+        // Adjust active column value: h/l or Left/Right (horizontal value adjustment)
+        KeyCode::Left | KeyCode::Char('h') => {
+            let delta = if key.modifiers.contains(KeyModifiers::ALT) { -5 } else { -1 };
+            if app.fan_selected_col == 0 {
+                adjust_fancurve_speed(app, delta);
+            } else {
+                adjust_fancurve_temp(app, delta);
+            }
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            let delta = if key.modifiers.contains(KeyModifiers::ALT) { 5 } else { 1 };
+            if app.fan_selected_col == 0 {
+                adjust_fancurve_speed(app, delta);
+            } else {
+                adjust_fancurve_temp(app, delta);
+            }
+        }
+
+        // Toggle editing between Speed (%) and Temperature (°C)
+        KeyCode::Char(' ') | KeyCode::Char('t') => {
+            app.fan_selected_col = if app.fan_selected_col == 0 { 1 } else { 0 };
+            let col_name = if app.fan_selected_col == 0 { "Speed (%)" } else { "Temperature (°C)" };
+            app.set_status(format!("Editing {col_name}"), false);
+        }
+
+        // Direct temperature adjustment shortcuts: [ / ] or H / L
+        KeyCode::Char('[') | KeyCode::Char('H') => {
             let delta = if key.modifiers.contains(KeyModifiers::ALT) { -5 } else { -1 };
             adjust_fancurve_temp(app, delta);
         }
-        KeyCode::Char('L') => {
+        KeyCode::Char(']') | KeyCode::Char('L') => {
             let delta = if key.modifiers.contains(KeyModifiers::ALT) { 5 } else { 1 };
             adjust_fancurve_temp(app, delta);
         }
-        KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+
+        // Direct speed adjustment shortcuts: - / +
+        KeyCode::Char('-') => {
             let delta = if key.modifiers.contains(KeyModifiers::ALT) { -5 } else { -1 };
-            adjust_fancurve_temp(app, delta);
+            adjust_fancurve_speed(app, delta);
         }
-        KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+        KeyCode::Char('+') | KeyCode::Char('=') => {
             let delta = if key.modifiers.contains(KeyModifiers::ALT) { 5 } else { 1 };
-            adjust_fancurve_temp(app, delta);
-        }
-        KeyCode::Char('[') => {
-            let delta = if key.modifiers.contains(KeyModifiers::ALT) { -5 } else { -1 };
-            adjust_fancurve_temp(app, delta);
-        }
-        KeyCode::Char(']') => {
-            let delta = if key.modifiers.contains(KeyModifiers::ALT) { 5 } else { 1 };
-            adjust_fancurve_temp(app, delta);
+            adjust_fancurve_speed(app, delta);
         }
 
         // Switch active fan (prompt if unapplied edits)
@@ -703,15 +738,6 @@ async fn handle_fancurve<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
                 } else {
                     "Safety floor override: disabled (safe minimum 30% at >= 80 C)"
                 },
-                false,
-            );
-        }
-
-        // Toggle 8-point numerical table
-        KeyCode::Char('t') => {
-            app.show_point_table = !app.show_point_table;
-            app.set_status(
-                if app.show_point_table { "8-point table: visible" } else { "8-point table: hidden" },
                 false,
             );
         }

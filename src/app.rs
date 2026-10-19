@@ -415,6 +415,7 @@ pub struct AppState<B: Backend> {
     pub fan_clamp_hint: Option<(String, Instant)>,
     pub allow_unsafe_floor: bool,
     pub current_preset_idx: usize,
+    pub fan_selected_col: usize, // 0 = Fan Speed (PWM %), 1 = Temperature (°C)
 
     // Aura RGB State
     pub aura_brightness: u32,
@@ -588,6 +589,7 @@ impl<B: Backend> AppState<B> {
             fan_clamp_hint: None,
             allow_unsafe_floor: false,
             current_preset_idx: 1, // Balanced
+            fan_selected_col: 0,
             aura_brightness,
             aura_mode,
             aura_data,
@@ -687,7 +689,11 @@ impl<B: Backend> AppState<B> {
                 }
             }
             ActiveTab::FanCurves => {
-                "Curves must be non-decreasing. Fan speed must be at least 30% above 80°C.".to_string()
+                if self.fan_selected_col == 0 {
+                    "j/k selects point, h/l adjusts speed, Space toggles temp/speed, w saves.".to_string()
+                } else {
+                    "j/k selects point, h/l adjusts temp, Space toggles temp/speed, w saves.".to_string()
+                }
             }
             ActiveTab::Aura => {
                 match self.aura_selected_field {
@@ -730,12 +736,16 @@ impl<B: Backend> AppState<B> {
                 }
             }
             ActiveTab::System => {
-                match self.system_selected_row {
-                    0 => "Faster pixel response; can cause ghosting in some content.".to_string(),
-                    1 => "Adjusts screen brightness to ambient room light.".to_string(),
-                    2 => "Hardware GPU operating mode configured by supergfxd.".to_string(),
-                    3 => "Exports full hardware and system diagnostics to ~/rogtui-diagnostics.txt.".to_string(),
-                    _ => String::new(),
+                let has_auto_bright = self.sensors.screen_auto_brightness.is_some();
+                let export_row = if has_auto_bright { 2 } else { 1 };
+                if self.system_selected_row == 0 {
+                    "Faster pixel response; can cause ghosting in some content.".to_string()
+                } else if self.system_selected_row == 1 && has_auto_bright {
+                    "Adjusts screen brightness to ambient room light.".to_string()
+                } else if self.system_selected_row == export_row {
+                    "Exports full hardware and system diagnostics to ~/.local/state/rogtui/report-<timestamp>.md.".to_string()
+                } else {
+                    String::new()
                 }
             }
         }

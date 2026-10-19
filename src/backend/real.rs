@@ -887,7 +887,12 @@ impl super::Backend for RealBackend {
                 if attr.node_name == "panel_overdrive" && attr.is_available {
                     sensors.panel_overdrive = Some(attr.current_value == 1);
                 } else if attr.node_name == "screen_auto_brightness" && attr.is_available {
-                    sensors.screen_auto_brightness = Some(attr.current_value == 1);
+                    let has_als = std::path::Path::new("/sys/devices/platform/asus-nb-wmi/als").exists()
+                        || std::path::Path::new("/sys/devices/platform/asus-nb-wmi/screen_auto_brightness").exists()
+                        || std::path::Path::new("/sys/bus/iio/devices").read_dir().map(|mut d| d.next().is_some()).unwrap_or(false);
+                    if has_als {
+                        sensors.screen_auto_brightness = Some(attr.current_value == 1);
+                    }
                 }
             }
         }

@@ -198,10 +198,12 @@ pub fn render_system<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let od_spans = toggle_widget(overdrive, app.system_selected_row == 0, theme);
     lines.push(label_value_row("Panel overdrive", od_spans, app.system_selected_row == 0, label_width, theme));
 
-    // Row 1: Auto-Brightness
-    let auto_bright = app.sensors.screen_auto_brightness.unwrap_or(false);
-    let ab_spans = toggle_widget(auto_bright, app.system_selected_row == 1, theme);
-    lines.push(label_value_row("Auto-brightness", ab_spans, app.system_selected_row == 1, label_width, theme));
+    let has_auto_bright = app.sensors.screen_auto_brightness.is_some();
+    if has_auto_bright {
+        let auto_bright = app.sensors.screen_auto_brightness.unwrap_or(false);
+        let ab_spans = toggle_widget(auto_bright, app.system_selected_row == 1, theme);
+        lines.push(label_value_row("Auto-brightness", ab_spans, app.system_selected_row == 1, label_width, theme));
+    }
     lines.push(Line::from(""));
 
     // -------------------------------------------------------------------------
@@ -226,17 +228,18 @@ pub fn render_system<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     lines.push(section_rule("Diagnostics", width, theme));
     lines.push(Line::from(""));
 
+    let export_row_idx = if has_auto_bright { 2 } else { 1 };
     let export_spans = vec![
         Span::styled(
             "[ Run ↵ ]",
-            if app.system_selected_row == 2 {
+            if app.system_selected_row == export_row_idx {
                 Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.dim)
             },
         ),
     ];
-    lines.push(label_value_row("Export report", export_spans, app.system_selected_row == 2, label_width, theme));
+    lines.push(label_value_row("Export report", export_spans, app.system_selected_row == export_row_idx, label_width, theme));
     lines.push(Line::from(""));
 
     // -------------------------------------------------------------------------

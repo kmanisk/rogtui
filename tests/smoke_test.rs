@@ -608,5 +608,80 @@ async fn test_clouds_and_dynamic_theme_sync() {
     assert_eq!(app.audio_service.get_audio_level(), 0);
 }
 
+#[tokio::test]
+async fn test_shift_jk_tab_switching() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = ActiveTab::Dashboard;
+
+    // Shift + j (J) should switch to Power tab
+    let shift_j = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('J'),
+        crossterm::event::KeyModifiers::SHIFT,
+    );
+    rogtui::handler::handle_key_event(&mut app, shift_j).await;
+    assert_eq!(app.current_tab, ActiveTab::Power, "Shift+J must move to Power tab");
+
+    // Shift + j (J) again -> FanCurves
+    rogtui::handler::handle_key_event(&mut app, shift_j).await;
+    assert_eq!(app.current_tab, ActiveTab::FanCurves, "Shift+J must move to FanCurves tab");
+
+    // Shift + k (K) should move back to Power
+    let shift_k = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('K'),
+        crossterm::event::KeyModifiers::SHIFT,
+    );
+    rogtui::handler::handle_key_event(&mut app, shift_k).await;
+    assert_eq!(app.current_tab, ActiveTab::Power, "Shift+K must move back to Power tab");
+
+    // Shift + k (K) should move back to Dashboard
+    rogtui::handler::handle_key_event(&mut app, shift_k).await;
+    assert_eq!(app.current_tab, ActiveTab::Dashboard, "Shift+K must move back to Dashboard tab");
+}
+
+#[tokio::test]
+async fn test_fan_curve_jk_point_navigation_and_hl_adjustment() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = ActiveTab::FanCurves;
+    app.active_point_idx = 0;
+    app.fan_selected_col = 0; // Speed
+
+    // j moves down to Point 2 (idx 1)
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('j'))).await;
+    assert_eq!(app.active_point_idx, 1, "j must navigate vertically down to next point");
+
+    // k moves up to Point 1 (idx 0)
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('k'))).await;
+    assert_eq!(app.active_point_idx, 0, "k must navigate vertically up to previous point");
+
+    // l adjusts speed up (+1%)
+    let orig_speed = app.fan_curves[app.active_fan_idx].points[0].pwm_percent;
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('l'))).await;
+    assert_eq!(
+        app.fan_curves[app.active_fan_idx].points[0].pwm_percent,
+        (orig_speed + 1).min(100),
+        "l must adjust active column value"
+    );
+
+    // Space toggles column to Temperature (1)
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(' '))).await;
+    assert_eq!(app.fan_selected_col, 1, "Space must toggle fan edit column to Temperature");
+
+    // Space toggles column back to Speed (0)
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(' '))).await;
+    assert_eq!(app.fan_selected_col, 0, "Space must toggle fan edit column back to Speed");
+}
+
+#[test]
+fn test_charge_limit_slider_thumb_and_level_display() {
+    let theme = rogtui::ui::theme::Theme::default();
+    let spans = rogtui::ui::widgets::charge_limit_slider(60, 24, true, &theme);
+    let rendered: String = spans.iter().map(|s| s.content.as_ref()).collect();
+
+    assert!(rendered.contains('◆'), "Slider must render thumb marker");
+    assert!(rendered.contains("60% (max lifespan)"), "Slider must show lifespan description");
+}
+
 
 

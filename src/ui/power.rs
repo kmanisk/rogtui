@@ -61,8 +61,19 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     lines.push(section_rule("Battery", width, theme));
     lines.push(Line::from(""));
 
+    // Current Battery Level (Read-only row to eliminate confusion between level and limit)
+    let current_level = app.sensors.battery_charge_percent.unwrap_or(60);
+    let level_status = if app.sensors.battery_status.eq_ignore_ascii_case("Charging") {
+        format!("{current_level}%   ·   Charging")
+    } else if app.sensors.battery_status.eq_ignore_ascii_case("Full") {
+        format!("{current_level}%   ·   Full")
+    } else {
+        format!("{current_level}%")
+    };
+    lines.push(label_value_row("Current level", vec![Span::styled(level_status, Style::default().fg(theme.fg))], false, label_width, theme));
+
     // Row 3: Charge Limit Slider
-    let slider_width = 24.min(width.saturating_sub(label_width + 20));
+    let slider_width = 24.min(width.saturating_sub(label_width + 24));
     let limit_spans = charge_limit_slider(
         app.charge_limit,
         slider_width,
@@ -77,7 +88,7 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     } else {
         "[ Start ↵ ]"
     };
-    let one_shot_spans = vec![
+    let mut one_shot_spans = vec![
         Span::styled(
             one_shot_str,
             if app.power_selected_field == 4 {
@@ -89,6 +100,11 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             },
         ),
     ];
+    if app.is_full_charge_active {
+        one_shot_spans.push(Span::styled("   Charges to 100% until unplugged", Style::default().fg(theme.dim)));
+    } else {
+        one_shot_spans.push(Span::styled("   Charge to 100% once for travel", Style::default().fg(theme.dim)));
+    }
     lines.push(label_value_row("Full charge once", one_shot_spans, app.power_selected_field == 4, label_width, theme));
     lines.push(Line::from(""));
 

@@ -126,7 +126,7 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
 
         // Render Table (if visible)
         if let Some(tbl_rect) = table_area {
-            render_fan_table(f, tbl_rect, curve, app.active_point_idx, theme);
+            render_fan_table(f, tbl_rect, curve, app.active_point_idx, app.fan_selected_col, theme);
         }
 
         // 3. Readout row at bottom
@@ -135,6 +135,8 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
         } else {
             (0, 0)
         };
+
+        let col_name = if app.fan_selected_col == 0 { "Speed" } else { "Temp" };
 
         let readout_spans = vec![
             Span::raw("  "),
@@ -145,6 +147,10 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
             Span::styled(
                 format!("{}°C → {}%", p_temp, p_speed),
                 Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" (editing {})", col_name),
+                Style::default().fg(theme.dim),
             ),
             Span::styled("   ·   ", Style::default().fg(Color::Rgb(70, 75, 85))),
             Span::styled("Operating: ", Style::default().fg(theme.dim)),
@@ -344,6 +350,7 @@ fn render_fan_table(
     area: Rect,
     curve: &FanCurve,
     active_pt_idx: usize,
+    selected_col: usize,
     theme: &Theme,
 ) {
     let width = area.width as usize;
@@ -353,24 +360,59 @@ fn render_fan_table(
     lines.push(section_rule("Points", width, theme));
 
     // Header row: Point   Temp   Speed
+    let temp_hdr_style = if selected_col == 1 {
+        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.dim)
+    };
+    let speed_hdr_style = if selected_col == 0 {
+        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.dim)
+    };
+
     lines.push(Line::from(vec![
-        Span::styled("  Point    Temp   Speed", Style::default().fg(theme.dim)),
+        Span::styled("  Point    ", Style::default().fg(theme.dim)),
+        Span::styled("Temp    ", temp_hdr_style),
+        Span::styled("Speed", speed_hdr_style),
     ]));
 
     for (idx, pt) in curve.points.iter().enumerate() {
         let is_sel = idx == active_pt_idx;
         let gutter = if is_sel { "▌ " } else { "  " };
-
         let is_invalid = pt.temp >= 80 && pt.pwm_percent < 30;
 
-        let num_str = format!("{:>5}", idx + 1);
-        let temp_str = format!("{:>7}°C", pt.temp);
-        let speed_str = format!("{:>7}%", pt.pwm_percent);
+        let num_str = format!("{:>5}    ", idx + 1);
 
-        let row_style = if is_sel {
-            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+        let (temp_style, speed_style) = if is_sel {
+            if selected_col == 1 {
+                (
+                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.fg),
+                )
+            } else {
+                (
+                    Style::default().fg(theme.fg),
+                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                )
+            }
         } else {
-            Style::default().fg(theme.dim)
+            (
+                Style::default().fg(theme.dim),
+                Style::default().fg(theme.dim),
+            )
+        };
+
+        let temp_str = if is_sel && selected_col == 1 {
+            format!("‹{:>3}°C›  ", pt.temp)
+        } else {
+            format!("{:>4}°C    ", pt.temp)
+        };
+
+        let speed_str = if is_sel && selected_col == 0 {
+            format!("‹{:>3}%›", pt.pwm_percent)
+        } else {
+            format!("{:>4}% ", pt.pwm_percent)
         };
 
         let mut row_spans = vec![
@@ -382,9 +424,9 @@ fn render_fan_table(
                     Style::default()
                 },
             ),
-            Span::styled(num_str, row_style),
-            Span::styled(temp_str, if is_sel { Style::default().fg(theme.fg).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.fg) }),
-            Span::styled(speed_str, if is_sel { Style::default().fg(theme.fg).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.fg) }),
+            Span::styled(num_str, if is_sel { Style::default().fg(theme.fg).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.dim) }),
+            Span::styled(temp_str, temp_style),
+            Span::styled(speed_str, speed_style),
         ];
 
         if is_invalid {

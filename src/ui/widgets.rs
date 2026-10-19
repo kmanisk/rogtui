@@ -222,45 +222,61 @@ pub fn charge_limit_slider(
     let max = 100.0;
     let val_f = (value as f32).clamp(min, max);
     let ratio = (val_f - min) / (max - min);
-    let filled_count = (ratio * width as f32).round() as usize;
 
-    let mut bar_chars = Vec::new();
+    let filled_col = if is_selected { theme.accent } else { theme.dim };
+    let track_col = Theme::track_color();
+    let warn_100 = value == 100;
+
+    let mut spans = Vec::new();
+    spans.push(Span::styled("40 ", Style::default().fg(theme.dim)));
+
+    let tick_60_idx = (((60.0 - min) / (max - min)) * (width.saturating_sub(1)) as f32).round() as usize;
+    let tick_80_idx = (((80.0 - min) / (max - min)) * (width.saturating_sub(1)) as f32).round() as usize;
+    let thumb_idx = (ratio * (width.saturating_sub(1)) as f32).round() as usize;
+
     for i in 0..width {
-        let frac = i as f32 / width as f32;
-        let pos_val = min + frac * (max - min);
-        let is_tick = (pos_val - 60.0).abs() < 2.5 || (pos_val - 80.0).abs() < 2.5;
-        if i < filled_count {
-            if is_tick {
-                bar_chars.push('╵');
-            } else {
-                bar_chars.push('━');
-            }
-        } else if is_tick {
-            bar_chars.push('╷');
+        if i == thumb_idx {
+            spans.push(Span::styled(
+                "◆",
+                Style::default().fg(if is_selected { theme.accent } else { theme.fg }).add_modifier(Modifier::BOLD),
+            ));
+        } else if i < thumb_idx {
+            let ch = if i == tick_60_idx || i == tick_80_idx { "╵" } else { "━" };
+            spans.push(Span::styled(ch, Style::default().fg(filled_col)));
         } else {
-            bar_chars.push('─');
+            let ch = if i == tick_60_idx || i == tick_80_idx { "╷" } else { "─" };
+            let col = if i == tick_60_idx || i == tick_80_idx { theme.dim } else { track_col };
+            spans.push(Span::styled(ch, Style::default().fg(col)));
         }
     }
 
-    let bar_str: String = bar_chars.into_iter().collect();
-    let filled_col = if is_selected { theme.accent } else { theme.dim };
-    let warn_100 = value == 100;
+    spans.push(Span::styled(" 100   ", Style::default().fg(theme.dim)));
 
-    vec![
-        Span::styled("40 ", Style::default().fg(theme.dim)),
-        Span::styled(bar_str, Style::default().fg(filled_col)),
-        Span::styled(" 100   ", Style::default().fg(theme.dim)),
-        Span::styled(
-            format!("{value}%"),
-            if warn_100 {
-                Style::default().fg(theme.warn).add_modifier(Modifier::BOLD)
-            } else if is_selected {
-                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.dim)
-            },
-        ),
-    ]
+    let limit_desc = match value {
+        60 => "60% (max lifespan)",
+        80 => "80% (balanced)",
+        100 => "100% (full charge)",
+        _ => "",
+    };
+
+    let text_val = if limit_desc.is_empty() {
+        format!("{value}% (stops at {value}%)")
+    } else {
+        limit_desc.to_string()
+    };
+
+    spans.push(Span::styled(
+        text_val,
+        if warn_100 {
+            Style::default().fg(theme.warn).add_modifier(Modifier::BOLD)
+        } else if is_selected {
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.dim)
+        },
+    ));
+
+    spans
 }
 
 pub fn render_sparkline(values: &[u64], width: usize, color: Color) -> Vec<Span<'static>> {
@@ -463,9 +479,9 @@ pub fn render_footer_two_rows<B: Backend>(
                 }
             }
             ActiveTab::FanCurves => vec![
-                ("h/l", "point"),
-                ("j/k", "speed"),
-                ("H/L", "temp"),
+                ("j/k", "point"),
+                ("h/l", "adjust"),
+                ("Space", "temp/speed"),
                 ("s", "preset"),
                 ("f", "fan"),
                 ("c", "custom"),
@@ -487,11 +503,12 @@ pub fn render_footer_two_rows<B: Backend>(
                 }
             }
             ActiveTab::System => {
-                match app.system_selected_row {
-                    0 | 1 => vec![("Space", "toggle")],
-                    2 => vec![],
-                    3 => vec![("Enter", "export report")],
-                    _ => vec![],
+                let has_auto_bright = app.sensors.screen_auto_brightness.is_some();
+                let export_row_idx = if has_auto_bright { 2 } else { 1 };
+                if app.system_selected_row == export_row_idx {
+                    vec![("Enter", "export report")]
+                } else {
+                    vec![("Space", "toggle")]
                 }
             }
         }
