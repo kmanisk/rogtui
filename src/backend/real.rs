@@ -761,6 +761,7 @@ impl super::Backend for RealBackend {
                             // Discrete GPU is active: safe to read without waking D3cold
                             let (gpu_temp, gpu_util) = self.nvml.query_gpu_metrics();
                             sensors.gpu_temp_c = gpu_temp;
+                            sensors.gpu_usage_percent = gpu_util.map(|u| u as u8);
                             match (gpu_temp, gpu_util) {
                                 (Some(t), Some(u)) => {
                                     sensors.dgpu_status = format!("Active ({t} C, {u}% util)");

@@ -799,6 +799,7 @@ pub struct SensorData {
     pub dgpu_name: String,
     pub dgpu_status: String,
     pub dgpu_power_state: String,
+    pub gpu_usage_percent: Option<u8>,
 
     // Battery Extended Telemetry
     pub battery_status: String,

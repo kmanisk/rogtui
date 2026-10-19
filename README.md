@@ -29,55 +29,37 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly interfa
 
 ## Features
 
-### 1. Dashboard (Tab 1)
-- Live system telemetry: CPU package temperature (C), GPU core temperature (C), CPU fan RPM, GPU fan RPM.
-- Real-time status: Active platform profile, GPU mode, dGPU power gate state, battery limit, and current battery percentage.
+### 1. Dash (Tab 1)
+- Clean read-only system telemetry: cleaned CPU name, RTX 5050 dGPU usage/temp/fan (or "Idle" if suspended), RAM usage in GiB, and 60-second Unicode temperature sparklines.
+- Battery summary: percentage, charge limit, health, and clean power state.
 - Quick profile cycling shortcut (`p`).
 
-### 2. Power Profiles & Charging (Tab 2)
+### 2. Power (Tab 2)
 - Platform profile selector: Quiet, Balanced, Performance.
-- AC and Battery binding profiles (automatic profile switching upon power plug/unplug).
-- Battery charge end threshold limiter (slider from 20% to 100% in 5% increments).
-- One-shot full charge override: Charges battery to 100% for travel, resetting automatically upon disconnect.
-- Energy Performance Preference (EPP) linkage and NVIDIA Dynamic Boost battery gating.
+- Merged AC and Battery binding profiles (`When plugged in: ‹...›`, `On battery: ‹...›` with "Off" option).
+- Battery charge limit slider (`━━━━━────  60%`, 20% to 100% in 5% increments).
+- One-shot full charge override action to temporarily charge to 100% for travel.
+- Real battery health calculation and dynamic cycle count display (hidden if unpopulated).
 
-### 3. Fan Curve Editor (Tab 3)
-- Per-fan interactive curve tuning (CPU and GPU fans) across all power profiles.
-- Sub-pixel resolution Braille graph rendering 141 interpolated points (0.5 C steps) with live crosshairs and operating point indicator.
-- 8 hardware control points per curve with monotonic non-decreasing safety validation.
-- Safety policy enforcement: Refuses curves that set fan speed below 30% at or above 80 C.
-- Factory BIOS reset (`r`) and one-key undo / revert to last-known-good curve (`u`).
+### 3. Fan (Tab 3)
+- Clean header: `Fan ‹ CPU ›   Preset ‹ Balanced ›   Custom ● Off/On`.
+- Strictly linear x (30-100°C) and y (0-100%) axes with evenly spaced labels.
+- Braille fan curve passing exactly through the 8 hardware points.
+- Highlighted selected point marker, dim unselected markers, and live operating point crosshair.
+- Monotonic non-decreasing safety validation and minimum 30% PWM thermal clamp at >= 80°C.
 
-### 4. Aura Keyboard Lighting (Tab 4)
-- Backlight brightness control (Off, Low, Medium, High).
-- 18 Lighting Modes across 4 distinct operational categories:
-  - **Hardware Firmware:** Static, Breathe, Rainbow, Pulse (Zero host CPU overhead, executed in Embedded Controller).
-  - **Software Animations:** RainbowFlow, BreathingColor, FireFlicker, StarryNight, SpectrumCycle, Clouds.
-  - **Audio & Visual Synchronization:**
-    - `AmbientSync`: Ported G-Helper `ApplyAmbient` Wayland screen sync (`0,400 1920x770` geometry crop, 0.05 downscale, +0.3 HSV saturation boost, 0.65 exponential smoothing).
-    - `VoicePulse`: Real-time microphone reactive pulse with dynamic Automatic Gain Control (AGC), noise floor filter, and cubic easing.
-    - `AudioPulse`: Real-time system audio playback reactive pulse.
-    - `AudioWave`: Multi-harmonic audio frequency split lighting.
-    - `ThemeSync`: Dynamic synchronization with active system desktop color palette (`~/.local/state/theme/colors.sh`).
-  - **System Telemetry:** Real-time thermal and load reactive modes (CpuTemp, GpuTemp, BatteryLevel, CpuLoad).
-- Dual-color RGB configuration with hex code representation and interactive 24-bit RGB/HSV color picker modal (`c`).
-- Keyboard power state toggles: Boot, Awake, Sleep, and Shutdown.
+### 4. RGB (Tab 4)
+- Backlight brightness slider (Off, Low, Medium, High).
+- Contextual control filtering: only controls supported by the active mode are shown (hides animation speed, direction, and secondary color when in Static mode).
+- Interactive 24-bit RGB/HSV color picker modal (`c`) with half-block hue strip and live swatch preview.
+- Hardware power states folded into a single compact line (Boot, Awake, Sleep, Shutdown).
+- Bottom contextual hint line explaining selected field or effect.
 
-### 5. GPU Mode Control (Tab 5)
-- Native `supergfxctl` mode switching: Integrated, Hybrid, Dedicated, and AsusMuxDgpu (Direct hardware MUX bypass).
-- Verification of hardware-supported modes to prevent unsupported mode configurations.
-- Pending action indicators: Displays if session logout or system reboot is required.
-- Confirmation prompt before triggering graphics mode switching.
-
-### 6. Armoury & Firmware Attributes (Tab 6)
-- Dynamic auto-discovery of all firmware attributes exposed by `xyz.ljones.AsusArmoury`:
-  - Panel Overdrive (3ms response time toggle)
-  - Charge Mode (Fast, Standard, Eco)
-  - dGPU ACPI Hardware Disable
-  - Display MUX Switch
-  - Screen Auto-Brightness (ALS)
-- Hardware defaults restoration per attribute (`r`).
-- Graceful degradation: Unavailable attributes on specific boards are cleanly marked and shielded from accidental writes.
+### 5. System (Tab 5)
+- Consolidated single view combining Display, Graphics, and About information.
+- Display controls: Panel Overdrive (3ms toggle) and Auto-Brightness.
+- Graphics: Plain text GPU mode display with dynamic support detection.
+- About: System model, BIOS version, kernel version, active session (`Sway · Wayland`), display mode (`1920×1200 · 165 Hz`), and ROGTUI version.
 
 ---
 
@@ -120,18 +102,16 @@ makepkg -si
 | Key | Context | Description |
 | :--- | :--- | :--- |
 | `Tab` / `Shift+Tab` | Global | Cycle to next / previous tab |
-| `1` .. `7` | Global | Direct jump to tab |
+| `1` .. `5` | Global | Direct jump to tab (Dash, Power, Fan, RGB, System) |
 | `j` / `k` or `Up` / `Down` | List Views | Move selection up / down |
-| `h` / `l` or `Left` / `Right` | Controls | Decrease / increase value, toggle, or navigate effect columns |
-| `Enter` / `Space` | Controls | Execute action, confirm, cycle, or open color picker |
-| `c` | Aura | Open interactive 24-bit RGB/HSV color picker modal |
+| `h` / `l` or `Left` / `Right` | Controls | Decrease / increase value, toggle, or cycle options |
+| `Enter` / `Space` | Controls | Execute action, toggle state, or open color picker |
+| `c` | RGB | Open interactive 24-bit RGB/HSV color picker modal |
 | `p` | Global | Quick cycle active Platform Profile |
-| `l` | Dashboard | Toggle real-time telemetry metrics logging to CSV |
-| `A` | Dashboard | Open Advanced Power Limits modal (SPL, sPPT, TGP) |
-| `w` | Fan / Aura | Apply and write staged configuration to hardware / BIOS |
-| `r` | Fan / Armoury | Restore factory default settings |
-| `u` | Fan | Undo / revert to last-known-good curve |
-| `y` | About | Export full system diagnostics report to `~/rogtui-diagnostics.txt` |
+| `w` | Fan / RGB | Apply and write staged configuration to hardware / BIOS |
+| `s` | Fan | Cycle fan presets (Quiet, Balanced, Performance) |
+| `f` | Fan | Toggle CPU / GPU fan curve selection |
+| `y` | System | Export full system diagnostics report to `~/rogtui-diagnostics.txt` |
 | `?` | Global | Open / close keyboard shortcuts help overlay |
 | `q` / `Esc` | Global | Close overlay / cancel confirmation / exit |
 

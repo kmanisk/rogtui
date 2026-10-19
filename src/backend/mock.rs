@@ -156,6 +156,7 @@ impl MockBackend {
             dgpu_name: "NVIDIA GeForce RTX 5050 Mobile".to_string(),
             dgpu_status: "Active (46 C)".to_string(),
             dgpu_power_state: "Active".to_string(),
+            gpu_usage_percent: Some(7),
             battery_status: "Not charging".to_string(),
             battery_power_w: Some(0.0),
             battery_health_percent: Some(98),

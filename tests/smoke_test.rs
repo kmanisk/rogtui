@@ -228,8 +228,7 @@ async fn test_render_all_tabs_80x24_and_120x40() {
         ActiveTab::Power,
         ActiveTab::FanCurves,
         ActiveTab::Aura,
-        ActiveTab::Gpu,
-        ActiveTab::Armoury,
+        ActiveTab::System,
     ];
 
     for (w, h) in [(80, 24), (120, 40), (50, 12)] {

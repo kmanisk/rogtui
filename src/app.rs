@@ -17,9 +17,7 @@ pub enum ActiveTab {
     Power = 1,
     FanCurves = 2,
     Aura = 3,
-    Gpu = 4,
-    Armoury = 5,
-    About = 6,
+    System = 4,
 }
 
 impl ActiveTab {
@@ -29,21 +27,17 @@ impl ActiveTab {
             ActiveTab::Power,
             ActiveTab::FanCurves,
             ActiveTab::Aura,
-            ActiveTab::Gpu,
-            ActiveTab::Armoury,
-            ActiveTab::About,
+            ActiveTab::System,
         ]
     }
 
     pub fn title(self) -> &'static str {
         match self {
-            ActiveTab::Dashboard => "1.Dashboard",
-            ActiveTab::Power => "2.Power",
-            ActiveTab::FanCurves => "3.Fan Curves",
-            ActiveTab::Aura => "4.RGB Aura",
-            ActiveTab::Gpu => "5.GPU (supergfx)",
-            ActiveTab::Armoury => "6.Armoury/Firmware",
-            ActiveTab::About => "7.About",
+            ActiveTab::Dashboard => "Dash",
+            ActiveTab::Power => "Power",
+            ActiveTab::FanCurves => "Fan",
+            ActiveTab::Aura => "RGB",
+            ActiveTab::System => "System",
         }
     }
 
@@ -52,22 +46,18 @@ impl ActiveTab {
             ActiveTab::Dashboard => ActiveTab::Power,
             ActiveTab::Power => ActiveTab::FanCurves,
             ActiveTab::FanCurves => ActiveTab::Aura,
-            ActiveTab::Aura => ActiveTab::Gpu,
-            ActiveTab::Gpu => ActiveTab::Armoury,
-            ActiveTab::Armoury => ActiveTab::About,
-            ActiveTab::About => ActiveTab::Dashboard,
+            ActiveTab::Aura => ActiveTab::System,
+            ActiveTab::System => ActiveTab::Dashboard,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            ActiveTab::Dashboard => ActiveTab::About,
+            ActiveTab::Dashboard => ActiveTab::System,
             ActiveTab::Power => ActiveTab::Dashboard,
             ActiveTab::FanCurves => ActiveTab::Power,
             ActiveTab::Aura => ActiveTab::FanCurves,
-            ActiveTab::Gpu => ActiveTab::Aura,
-            ActiveTab::Armoury => ActiveTab::Gpu,
-            ActiveTab::About => ActiveTab::Armoury,
+            ActiveTab::System => ActiveTab::Aura,
         }
     }
 }
@@ -472,6 +462,9 @@ pub struct AppState<B: Backend> {
     // Power Tab field index
     pub power_selected_field: usize,
 
+    // System Tab field index
+    pub system_selected_row: usize,
+
     // Metrics Logging State (Page 1 toggleable telemetry recorder)
     pub is_logging_metrics: bool,
     pub metrics_log_path: std::path::PathBuf,
@@ -602,6 +595,7 @@ impl<B: Backend> AppState<B> {
             cpu_temp_history,
             gpu_temp_history,
             power_selected_field: 0,
+            system_selected_row: 0,
             is_logging_metrics: false,
             metrics_log_path: if let Ok(home) = std::env::var("HOME") {
                 std::path::PathBuf::from(home).join(".local/share/rogtui/metrics.csv")

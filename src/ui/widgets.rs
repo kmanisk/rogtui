@@ -17,209 +17,136 @@ pub fn panel_block<'a>(title: impl Into<Span<'a>>, focused: bool, theme: &Theme)
         .border_style(if focused {
             Style::default().fg(theme.accent)
         } else {
-            Style::default().fg(theme.dim)
+            Style::default().fg(Color::Rgb(80, 90, 105))
         })
         .title(title.into())
         .padding(Padding::horizontal(1))
 }
 
-pub fn render_header<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
-    let mut left_spans = vec![
-        Span::raw(" "),
-        Span::styled(
-            " ROGTUI ",
-            Style::default()
-                .bg(theme.accent)
-                .fg(theme.sel_fg)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            "v0.1.0 (asusd v6.5.0 + supergfxd v5.2.7)",
-            Style::default().fg(theme.dim),
-        ),
-    ];
-
-    let prof_name = app.platform_profile.as_str();
-    let prof_col = theme.profile_color(app.platform_profile);
-    let bat_str = if let Some(b) = app.sensors.battery_charge_percent {
-        format!("[BAT: {b}%]")
+pub fn section_rule(title: &str, width: usize, theme: &Theme) -> Line<'static> {
+    let prefix = format!("── {title} ");
+    let prefix_len = prefix.chars().count();
+    let fill = if width > prefix_len + 2 {
+        "─".repeat(width.saturating_sub(prefix_len))
     } else {
-        "[AC Power]".to_string()
+        "──".to_string()
     };
-
-    let right_spans = vec![
-        Span::styled(format!("[Profile: {prof_name}]"), Style::default().fg(prof_col).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(bat_str, Style::default().fg(theme.ok)),
-        Span::raw(" "),
-    ];
-
-    let left_len: usize = left_spans.iter().map(|s| s.content.len()).sum();
-    let right_len: usize = right_spans.iter().map(|s| s.content.len()).sum();
-    let total_width = area.width as usize;
-
-    if total_width > left_len + right_len {
-        let padding = total_width - left_len - right_len;
-        left_spans.push(Span::raw(" ".repeat(padding)));
-        left_spans.extend(right_spans);
-    }
-
-    f.render_widget(Paragraph::new(Line::from(left_spans)), area);
+    Line::from(vec![
+        Span::styled(format!("── {title} "), Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(fill, Style::default().fg(Color::Rgb(70, 75, 85))),
+    ])
 }
 
-pub fn render_tab_bar(f: &mut Frame, area: Rect, active_tab: ActiveTab, theme: &Theme) {
-    let tabs = [
-        (ActiveTab::Dashboard, "1 Dash"),
-        (ActiveTab::Power, "2 Power"),
-        (ActiveTab::FanCurves, "3 Fan"),
-        (ActiveTab::Aura, "4 RGB"),
-        (ActiveTab::Gpu, "5 GPU"),
-        (ActiveTab::Armoury, "6 Armoury"),
-        (ActiveTab::About, "7 About"),
-    ];
-
-    let mut spans = vec![Span::raw(" ")];
-    for (tab, name) in tabs.iter() {
-        let is_active = *tab == active_tab;
-        if is_active {
-            spans.push(Span::styled(
-                format!(" [ {name} ] "),
-                Style::default()
-                    .bg(theme.accent)
-                    .fg(theme.sel_fg)
-                    .add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            spans.push(Span::styled(
-                format!("   {name}   "),
-                Style::default().fg(theme.dim),
-            ));
-        }
-        spans.push(Span::raw(" "));
-    }
-
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
-    let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
-        vec![
-            ("j/k", "Select Slider"),
-            ("h/l", "Adjust Color"),
-            ("Enter", "Apply"),
-            ("Esc", "Cancel"),
-        ]
-    } else if app.show_advanced_power_modal {
-        vec![
-            ("Esc/Enter", "Close Modal"),
-        ]
-    } else {
-        match app.current_tab {
-            ActiveTab::Dashboard => vec![
-                ("Tab", "Next Tab"),
-                ("p", "Cycle Profile"),
-                ("a", "Power Limits"),
-                ("o", "Overdrive"),
-                ("b", "Auto Bright"),
-                ("?", "Help"),
-                ("q", "Quit"),
-            ],
-            ActiveTab::Power => vec![
-                ("j/k", "Select Field"),
-                ("h/l", "Adjust / Limit"),
-                ("Enter", "Toggle"),
-                ("?", "Help"),
-                ("q", "Quit"),
-            ],
-            ActiveTab::FanCurves => vec![
-                ("h/l", "Select Pt"),
-                ("j/k", "Speed (+/-1%)"),
-                ("H/L", "Temp (+/-1°C)"),
-                ("s", "Preset"),
-                ("x", "Auto Repair"),
-                ("w", "Apply to EC"),
-                ("?", "Help"),
-                ("q", "Quit"),
-            ],
-            ActiveTab::Aura => {
-                if app.aura_brightness == 0 {
-                    vec![
-                        ("h/l", "Turn On Backlight"),
-                        ("j/k", "Select Field"),
-                        ("w", "Save to BIOS"),
-                        ("?", "Help"),
-                        ("q", "Quit"),
-                    ]
-                } else {
-                    vec![
-                        ("j/k", "Select Field"),
-                        ("h/l", "Cycle Mode / Preset"),
-                        ("c/Enter", "Color Picker"),
-                        ("w", "Save to BIOS"),
-                        ("?", "Help"),
-                        ("q", "Quit"),
-                    ]
-                }
-            }
-            ActiveTab::Gpu => vec![
-                ("j/k", "Select Mode"),
-                ("Enter", "Switch GPU Mode"),
-                ("?", "Help"),
-                ("q", "Quit"),
-            ],
-            ActiveTab::Armoury => vec![
-                ("j/k", "Select Attr"),
-                ("h/l", "Adjust Value"),
-                ("Enter", "Toggle"),
-                ("u", "Toggle Unavail"),
-                ("r", "Restore Default"),
-                ("?", "Help"),
-                ("q", "Quit"),
-            ],
-            ActiveTab::About => vec![
-                ("Tab", "Next Tab"),
-                ("y", "Export Report"),
-                ("?", "Help"),
-                ("q", "Quit"),
-            ],
-        }
-    };
-
-    let mut spans = vec![Span::raw(" ")];
-    for (key, desc) in keybinds.iter() {
+pub fn label_value_row(
+    label: &str,
+    value_spans: Vec<Span<'static>>,
+    is_selected: bool,
+    label_width: usize,
+    theme: &Theme,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    if is_selected {
+        spans.push(Span::styled("▌ ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
         spans.push(Span::styled(
-            format!("[{key}]"),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            format!("{label: <width$} ", width = label_width),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(format!("{desc}  "), Style::default().fg(theme.fg)));
-    }
-
-    // Status / Toast right-aligned
-    let status_span = if let Some((msg, is_error, _)) = &app.status_message {
-        if *is_error {
-            Span::styled(format!(" [err] {msg} "), Style::default().bg(theme.err).fg(Color::White).add_modifier(Modifier::BOLD))
-        } else {
-            Span::styled(format!(" [ok] {msg} "), Style::default().bg(theme.ok).fg(Color::Black).add_modifier(Modifier::BOLD))
-        }
-    } else if let Some((hint, _)) = &app.fan_clamp_hint {
-        Span::styled(format!(" [hint: {hint}] "), Style::default().bg(theme.warn).fg(Color::Black))
     } else {
-        Span::raw("")
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("{label: <width$} ", width = label_width),
+            Style::default().fg(theme.dim),
+        ));
+    }
+    spans.extend(value_spans);
+    Line::from(spans)
+}
+
+pub fn choice_widget(current_val: &str, is_selected: bool, theme: &Theme) -> Vec<Span<'static>> {
+    let arrow_col = if is_selected { theme.accent } else { theme.dim };
+    let val_style = if is_selected {
+        Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.fg)
     };
 
-    let left_len: usize = spans.iter().map(|s| s.content.len()).sum();
-    let status_len = status_span.content.len();
-    let total_width = area.width as usize;
+    vec![
+        Span::styled("‹ ", Style::default().fg(arrow_col)),
+        Span::styled(current_val.to_string(), val_style),
+        Span::styled(" ›", Style::default().fg(arrow_col)),
+    ]
+}
 
-    if total_width > left_len + status_len + 2 {
-        let padding = total_width - left_len - status_len;
-        spans.push(Span::raw(" ".repeat(padding)));
-        spans.push(status_span);
+pub fn toggle_widget(enabled: bool, is_selected: bool, theme: &Theme) -> Vec<Span<'static>> {
+    if enabled {
+        let style = if is_selected {
+            Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.ok)
+        };
+        vec![Span::styled("● On", style)]
+    } else {
+        vec![Span::styled("○ Off", Style::default().fg(theme.dim))]
+    }
+}
+
+pub fn slider_widget(
+    value: u32,
+    min: u32,
+    max: u32,
+    width: usize,
+    unit: &str,
+    is_selected: bool,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let clamped_val = value.clamp(min, max);
+    let span_range = max.saturating_sub(min).max(1);
+    let ratio = (clamped_val.saturating_sub(min) as f32 / span_range as f32).clamp(0.0, 1.0);
+    let filled_count = (ratio * width as f32).round() as usize;
+    let empty_count = width.saturating_sub(filled_count);
+
+    let filled_col = if is_selected { theme.accent } else { theme.dim };
+    let track_col = Color::Rgb(70, 75, 85);
+
+    vec![
+        Span::styled("━".repeat(filled_count), Style::default().fg(filled_col)),
+        Span::styled("─".repeat(empty_count), Style::default().fg(track_col)),
+        Span::styled(
+            format!("  {value}{unit}"),
+            if is_selected {
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.dim)
+            },
+        ),
+    ]
+}
+
+pub fn render_sparkline(values: &[u64], width: usize, color: Color) -> Vec<Span<'static>> {
+    if values.is_empty() {
+        return vec![Span::raw(" ".repeat(width))];
+    }
+    let glyphs = [' ', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let min = *values.iter().min().unwrap_or(&0);
+    let max = *values.iter().max().unwrap_or(&100);
+    let range = (max - min).max(1);
+
+    let mut spans = Vec::new();
+    let start_idx = values.len().saturating_sub(width);
+    let slice = &values[start_idx..];
+
+    // Left padding if fewer items than width
+    if slice.len() < width {
+        spans.push(Span::raw(" ".repeat(width - slice.len())));
     }
 
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    for &v in slice {
+        let idx = (((v.saturating_sub(min)) * (glyphs.len() - 1) as u64) / range) as usize;
+        let g = glyphs[idx.min(glyphs.len() - 1)];
+        spans.push(Span::styled(g.to_string(), Style::default().fg(color)));
+    }
+
+    spans
 }
 
 pub fn render_gauge(
@@ -236,7 +163,6 @@ pub fn render_gauge(
     let mut spans = Vec::new();
     spans.push(Span::styled(format!("  {label: <14}: "), Style::default().fg(theme.dim)));
 
-    // Btop-style empty track color
     let empty_color = Color::Rgb(55, 60, 68);
     let is_battery = label.to_ascii_lowercase().contains("battery");
 
@@ -265,8 +191,141 @@ pub fn render_gauge(
     }
 
     spans.push(Span::styled(format!("  {val_str}"), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)));
-
     Line::from(spans)
+}
+
+pub fn render_tab_bar(f: &mut Frame, area: Rect, active_tab: ActiveTab, theme: &Theme) {
+    let tabs = [
+        (ActiveTab::Dashboard, "Dash"),
+        (ActiveTab::Power, "Power"),
+        (ActiveTab::FanCurves, "Fan"),
+        (ActiveTab::Aura, "RGB"),
+        (ActiveTab::System, "System"),
+    ];
+
+    let mut spans = vec![Span::raw(" ")];
+    for (tab, name) in tabs.iter() {
+        let is_active = *tab == active_tab;
+        if is_active {
+            spans.push(Span::styled(
+                format!(" {name} "),
+                Style::default()
+                    .bg(theme.accent)
+                    .fg(theme.sel_fg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!(" {name} "),
+                Style::default().fg(theme.dim),
+            ));
+        }
+        spans.push(Span::raw("  "));
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+pub fn render_hint_line(f: &mut Frame, area: Rect, hint_text: &str, theme: &Theme) {
+    let line = Line::from(vec![
+        Span::styled("  ", Style::default()),
+        Span::styled(hint_text.to_string(), Style::default().fg(theme.dim)),
+    ]);
+    f.render_widget(Paragraph::new(line), area);
+}
+
+pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
+    let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
+        vec![
+            ("j/k", "slider"),
+            ("h/l", "adjust"),
+            ("Enter", "apply"),
+            ("Esc", "cancel"),
+        ]
+    } else {
+        match app.current_tab {
+            ActiveTab::Dashboard => vec![
+                ("p", "cycle profile"),
+                ("Tab", "next tab"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            ActiveTab::Power => vec![
+                ("j/k", "select"),
+                ("h/l", "adjust"),
+                ("Enter", "toggle"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+            ActiveTab::FanCurves => vec![
+                ("h/l", "point"),
+                ("j/k", "speed"),
+                ("H/L", "temp"),
+                ("s", "preset"),
+                ("w", "apply"),
+                ("?", "help"),
+            ],
+            ActiveTab::Aura => vec![
+                ("j/k", "select"),
+                ("h/l", "mode / color"),
+                ("c", "color picker"),
+                ("w", "save"),
+                ("?", "help"),
+            ],
+            ActiveTab::System => vec![
+                ("j/k", "select"),
+                ("Enter", "toggle / switch"),
+                ("y", "export report"),
+                ("?", "help"),
+                ("q", "quit"),
+            ],
+        }
+    };
+
+    let toast_span = if let Some((msg, is_error, _)) = &app.status_message {
+        if *is_error {
+            Span::styled(format!(" [!] {msg} "), Style::default().bg(theme.err).fg(Color::White).add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled(format!(" {msg} "), Style::default().bg(theme.ok).fg(Color::Black).add_modifier(Modifier::BOLD))
+        }
+    } else if let Some((hint, _)) = &app.fan_clamp_hint {
+        Span::styled(format!(" {hint} "), Style::default().bg(theme.warn).fg(Color::Black))
+    } else {
+        Span::raw("")
+    };
+
+    let toast_len = toast_span.content.len();
+    let total_width = area.width as usize;
+
+    let mut spans = vec![Span::raw(" ")];
+    let mut current_len = 1 + toast_len + 2;
+
+    for (key, desc) in keybinds.iter().take(5) {
+        let entry_len = key.len() + desc.len() + 3;
+        if current_len + entry_len < total_width {
+            spans.push(Span::styled(
+                (*key).to_string(),
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                format!("{desc}  "),
+                Style::default().fg(theme.dim),
+            ));
+            current_len += entry_len;
+        } else {
+            break;
+        }
+    }
+
+    let left_len: usize = spans.iter().map(|s| s.content.len()).sum();
+    if total_width > left_len + toast_len {
+        let padding = total_width - left_len - toast_len;
+        spans.push(Span::raw(" ".repeat(padding)));
+        spans.push(toast_span);
+    }
+
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -290,7 +349,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 }
 
 pub fn render_confirm_modal(f: &mut Frame, prompt: &str, area: Rect, theme: &Theme) {
-    let popup_area = centered_rect(60, 25, area);
+    let popup_area = centered_rect(50, 22, area);
     f.render_widget(Clear, popup_area);
 
     let lines = vec![
@@ -298,11 +357,10 @@ pub fn render_confirm_modal(f: &mut Frame, prompt: &str, area: Rect, theme: &The
         Line::from(Span::styled(prompt.to_string(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD))),
         Line::from(""),
         Line::from(vec![
-            Span::styled("Press ", Style::default().fg(theme.dim)),
-            Span::styled("'y'", Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)),
-            Span::styled(" to Confirm   |   Press ", Style::default().fg(theme.dim)),
-            Span::styled("'n' or Esc", Style::default().fg(theme.err).add_modifier(Modifier::BOLD)),
-            Span::styled(" to Cancel", Style::default().fg(theme.dim)),
+            Span::styled("y", Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)),
+            Span::styled(" Confirm   ·   ", Style::default().fg(theme.dim)),
+            Span::styled("n / Esc", Style::default().fg(theme.err).add_modifier(Modifier::BOLD)),
+            Span::styled(" Cancel", Style::default().fg(theme.dim)),
         ]),
     ];
 
@@ -313,33 +371,33 @@ pub fn render_confirm_modal(f: &mut Frame, prompt: &str, area: Rect, theme: &The
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(theme.warn))
-                .title(Span::styled(" Confirm Action ", Style::default().fg(theme.warn).add_modifier(Modifier::BOLD))),
+                .title(Span::styled(" Confirm ", Style::default().fg(theme.warn).add_modifier(Modifier::BOLD))),
         );
     f.render_widget(widget, popup_area);
 }
 
 pub fn render_help_overlay(f: &mut Frame, area: Rect, current_tab: ActiveTab, theme: &Theme) {
-    let popup_area = centered_rect(70, 80, area);
+    let popup_area = centered_rect(65, 75, area);
     f.render_widget(Clear, popup_area);
 
     let mut help_lines = vec![
         Line::from(Span::styled(
-            "  ROGTUI Hardware Controller (asusd v6.5.0 + supergfxd v5.2.7)",
+            "  Keyboard Controls",
             Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(Span::styled("  -- Global Shortcuts --", Style::default().fg(theme.dim))),
+        Line::from(Span::styled("  -- Global --", Style::default().fg(theme.dim))),
+        Line::from(vec![
+            Span::styled("  1 .. 5           : ", Style::default().fg(theme.warn)),
+            Span::raw("Direct jump to tab (Dash, Power, Fan, RGB, System)"),
+        ]),
         Line::from(vec![
             Span::styled("  Tab / Shift+Tab  : ", Style::default().fg(theme.warn)),
             Span::raw("Cycle to next / previous tab"),
         ]),
         Line::from(vec![
-            Span::styled("  1 .. 6           : ", Style::default().fg(theme.warn)),
-            Span::raw("Direct jump to tab"),
-        ]),
-        Line::from(vec![
             Span::styled("  p                : ", Style::default().fg(theme.warn)),
-            Span::raw("Cycle Platform Profile (Quiet -> Balanced -> Performance)"),
+            Span::raw("Quick cycle Platform Profile"),
         ]),
         Line::from(vec![
             Span::styled("  ?                : ", Style::default().fg(theme.warn)),
@@ -354,14 +412,14 @@ pub fn render_help_overlay(f: &mut Frame, area: Rect, current_tab: ActiveTab, th
 
     match current_tab {
         ActiveTab::Dashboard => {
-            help_lines.push(Line::from(Span::styled("  -- Dashboard Keys --", Style::default().fg(theme.dim))));
+            help_lines.push(Line::from(Span::styled("  -- Dash --", Style::default().fg(theme.dim))));
             help_lines.push(Line::from(vec![
                 Span::styled("  p                : ", Style::default().fg(theme.warn)),
-                Span::raw("Cycle active platform profile immediately"),
+                Span::raw("Cycle active platform profile (Quiet -> Balanced -> Performance)"),
             ]));
         }
         ActiveTab::Power => {
-            help_lines.push(Line::from(Span::styled("  -- Power Tab Keys --", Style::default().fg(theme.dim))));
+            help_lines.push(Line::from(Span::styled("  -- Power --", Style::default().fg(theme.dim))));
             help_lines.push(Line::from(vec![
                 Span::styled("  j / k or Up/Down : ", Style::default().fg(theme.warn)),
                 Span::raw("Select configuration row"),
@@ -376,7 +434,7 @@ pub fn render_help_overlay(f: &mut Frame, area: Rect, current_tab: ActiveTab, th
             ]));
         }
         ActiveTab::FanCurves => {
-            help_lines.push(Line::from(Span::styled("  -- Fan Curves Tab Keys --", Style::default().fg(theme.dim))));
+            help_lines.push(Line::from(Span::styled("  -- Fan --", Style::default().fg(theme.dim))));
             help_lines.push(Line::from(vec![
                 Span::styled("  h / l or L/R     : ", Style::default().fg(theme.warn)),
                 Span::raw("Select previous / next curve point"),
@@ -387,95 +445,53 @@ pub fn render_help_overlay(f: &mut Frame, area: Rect, current_tab: ActiveTab, th
             ]));
             help_lines.push(Line::from(vec![
                 Span::styled("  H / L (Shift+h/l): ", Style::default().fg(theme.warn)),
-                Span::raw("Adjust point temperature +/- 1 C (Alt for 5 C)"),
+                Span::raw("Adjust point temperature +/- 1 C"),
             ]));
             help_lines.push(Line::from(vec![
-                Span::styled("  w / Enter        : ", Style::default().fg(theme.warn)),
-                Span::raw("Apply and write curves to hardware via DBus"),
-            ]));
-            help_lines.push(Line::from(vec![
-                Span::styled("  x                : ", Style::default().fg(theme.warn)),
-                Span::raw("Repair non-monotonic points (enforces running max)"),
-            ]));
-            help_lines.push(Line::from(vec![
-                Span::styled("  u                : ", Style::default().fg(theme.warn)),
-                Span::raw("Revert to last applied curve"),
-            ]));
-            help_lines.push(Line::from(vec![
-                Span::styled("  r                : ", Style::default().fg(theme.warn)),
-                Span::raw("Reset curves to factory BIOS defaults (confirm)"),
-            ]));
-            help_lines.push(Line::from(vec![
-                Span::styled("  s / S            : ", Style::default().fg(theme.warn)),
-                Span::raw("Cycle presets (Silent/Balanced/Aggressive) / Save Custom"),
+                Span::styled("  s                : ", Style::default().fg(theme.warn)),
+                Span::raw("Cycle presets (Silent / Balanced / Aggressive)"),
             ]));
             help_lines.push(Line::from(vec![
                 Span::styled("  f                : ", Style::default().fg(theme.warn)),
                 Span::raw("Switch active fan (CPU <-> GPU)"),
             ]));
             help_lines.push(Line::from(vec![
-                Span::styled("  t                : ", Style::default().fg(theme.warn)),
-                Span::raw("Toggle 8-point numerical table"),
-            ]));
-            help_lines.push(Line::from(vec![
-                Span::styled("  o                : ", Style::default().fg(theme.warn)),
-                Span::raw("Toggle other fan comparison overlay"),
+                Span::styled("  w                : ", Style::default().fg(theme.warn)),
+                Span::raw("Apply and write curves to hardware"),
             ]));
         }
         ActiveTab::Aura => {
-            help_lines.push(Line::from(Span::styled("  -- RGB Lighting Keys --", Style::default().fg(theme.dim))));
+            help_lines.push(Line::from(Span::styled("  -- RGB --", Style::default().fg(theme.dim))));
             help_lines.push(Line::from(vec![
                 Span::styled("  j / k or Up/Down : ", Style::default().fg(theme.warn)),
-                Span::raw("Select field (skips effect fields when backlight is Off)"),
+                Span::raw("Select row"),
             ]));
             help_lines.push(Line::from(vec![
                 Span::styled("  h / l or L/R     : ", Style::default().fg(theme.warn)),
-                Span::raw("Adjust brightness, mode, color channel, or preset"),
+                Span::raw("Cycle lighting mode / adjust sliders"),
             ]));
             help_lines.push(Line::from(vec![
-                Span::styled("  c / Enter        : ", Style::default().fg(theme.warn)),
-                Span::raw("Open 24-bit RGB/HSV Color Picker modal (live keyboard preview)"),
+                Span::styled("  c                : ", Style::default().fg(theme.warn)),
+                Span::raw("Open 24-bit RGB Color Picker modal"),
             ]));
             help_lines.push(Line::from(vec![
                 Span::styled("  w                : ", Style::default().fg(theme.warn)),
-                Span::raw("Save current lighting parameters and power states"),
+                Span::raw("Save current lighting parameters to firmware"),
             ]));
         }
-        ActiveTab::Gpu => {
-            help_lines.push(Line::from(Span::styled("  -- GPU Tab Keys --", Style::default().fg(theme.dim))));
+        ActiveTab::System => {
+            help_lines.push(Line::from(Span::styled("  -- System --", Style::default().fg(theme.dim))));
             help_lines.push(Line::from(vec![
                 Span::styled("  j / k or Up/Down : ", Style::default().fg(theme.warn)),
-                Span::raw("Select target GPU mode"),
+                Span::raw("Select row"),
             ]));
             help_lines.push(Line::from(vec![
-                Span::styled("  Enter            : ", Style::default().fg(theme.warn)),
-                Span::raw("Switch mode (opens confirmation stating required action)"),
+                Span::styled("  Enter / Space    : ", Style::default().fg(theme.warn)),
+                Span::raw("Toggle display settings / switch GPU mode"),
             ]));
-        }
-        ActiveTab::Armoury => {
-            help_lines.push(Line::from(Span::styled("  -- Armoury Tab Keys --", Style::default().fg(theme.dim))));
-            help_lines.push(Line::from(vec![
-                Span::styled("  j / k or Up/Down : ", Style::default().fg(theme.warn)),
-                Span::raw("Select attribute"),
-            ]));
-            help_lines.push(Line::from(vec![
-                Span::styled("  h / l or Enter   : ", Style::default().fg(theme.warn)),
-                Span::raw("Adjust or toggle attribute (confirm modal on MUX write)"),
-            ]));
-            help_lines.push(Line::from(vec![
-                Span::styled("  u                : ", Style::default().fg(theme.warn)),
-                Span::raw("Toggle visibility of unavailable attributes"),
-            ]));
-            help_lines.push(Line::from(vec![
-                Span::styled("  r                : ", Style::default().fg(theme.warn)),
-                Span::raw("Restore hardware default for selected attribute"),
-            ]));
-        }
-        ActiveTab::About => {
-            help_lines.push(Line::from(Span::styled("  -- About Tab Keys --", Style::default().fg(theme.dim))));
             help_lines.push(Line::from(vec![
                 Span::styled("  y                : ", Style::default().fg(theme.warn)),
-                Span::raw("Export system diagnostics report to ~/rogtui-diagnostics.txt"),
+                Span::raw("Export system diagnostics report"),
             ]));
         }
     }

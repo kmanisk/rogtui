@@ -8,18 +8,18 @@ use rogtui::ui::render_ui;
 async fn main() -> anyhow::Result<()> {
     let backend = MockBackend::new();
     let mut app = AppState::new(backend).await?;
+    app.cpu_temp_history = std::collections::VecDeque::from(vec![52, 53, 53, 54, 55, 56, 55, 54, 54]);
+    app.gpu_temp_history = std::collections::VecDeque::from(vec![44, 44, 45, 45, 46, 46, 45, 46]);
 
     let tabs = [
-        (ActiveTab::Dashboard, "dashboard"),
+        (ActiveTab::Dashboard, "dash"),
         (ActiveTab::Power, "power"),
-        (ActiveTab::FanCurves, "fancurves"),
-        (ActiveTab::Aura, "aura"),
-        (ActiveTab::Gpu, "gpu"),
-        (ActiveTab::Armoury, "armoury"),
-        (ActiveTab::About, "about"),
+        (ActiveTab::FanCurves, "fan"),
+        (ActiveTab::Aura, "rgb"),
+        (ActiveTab::System, "system"),
     ];
 
-    let sizes = [(80, 24), (120, 40)];
+    let sizes = [(80, 24), (100, 30), (160, 45)];
 
     std::fs::create_dir_all("target/captures")?;
 
@@ -46,29 +46,6 @@ async fn main() -> anyhow::Result<()> {
             println!("Saved capture: {file_path}");
         }
 
-        // Capture Dashboard Advanced Power Modal
-        {
-            app.current_tab = ActiveTab::Dashboard;
-            app.show_advanced_power_modal = true;
-            let test_backend = TestBackend::new(w, h);
-            let mut terminal = Terminal::new(test_backend)?;
-            terminal.draw(|f| render_ui(f, &app))?;
-            let buffer = terminal.backend().buffer();
-            let mut content = String::new();
-            for y in 0..h {
-                let mut line = String::new();
-                for x in 0..w {
-                    line.push_str(buffer[(x, y)].symbol());
-                }
-                content.push_str(line.trim_end());
-                content.push('\n');
-            }
-            let file_path = format!("target/captures/dashboard_power_modal_{w}x{h}.txt");
-            std::fs::write(&file_path, content)?;
-            println!("Saved capture: {file_path}");
-            app.show_advanced_power_modal = false;
-        }
-
         // Capture Aura Color Picker Modal
         {
             app.current_tab = ActiveTab::Aura;
@@ -86,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
                 content.push_str(line.trim_end());
                 content.push('\n');
             }
-            let file_path = format!("target/captures/aura_color_picker_modal_{w}x{h}.txt");
+            let file_path = format!("target/captures/rgb_color_picker_{w}x{h}.txt");
             std::fs::write(&file_path, content)?;
             println!("Saved capture: {file_path}");
             app.show_color_picker_modal = false;

@@ -1,10 +1,8 @@
-pub mod about;
-pub mod armoury;
 pub mod aura;
 pub mod dashboard;
 pub mod fancurve;
-pub mod gpu;
 pub mod power;
+pub mod system;
 pub mod theme;
 pub mod widgets;
 
@@ -19,44 +17,39 @@ use ratatui::{
 use crate::app::{ActiveTab, AppState};
 use crate::backend::Backend;
 use crate::ui::widgets::{
-    panel_block, render_confirm_modal, render_footer, render_header, render_help_overlay,
-    render_tab_bar,
+    panel_block, render_confirm_modal, render_footer, render_help_overlay, render_tab_bar,
 };
 
 pub fn render_ui<B: Backend>(f: &mut Frame, app: &AppState<B>) {
     let size = f.area();
 
-    // Enforce minimum terminal size: under 60x16, render small warning
-    if size.width < 60 || size.height < 16 {
+    // Enforce minimum terminal size: under 80x24, render warning
+    if size.width < 80 || size.height < 24 {
         render_terminal_too_small(f, size, &app.theme);
         return;
     }
 
-    // 4 vertical chunks: Header (1), Tab bar (1), Tab content (min), Footer (1)
+    // 3 vertical chunks: Tab bar (1), Tab content (min), Footer (1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Top header badge + machine + daemons
-            Constraint::Length(1), // Tab bar with '|' separators
-            Constraint::Min(12),   // Tab content area
-            Constraint::Length(1), // Footer keybinds + right toast
+            Constraint::Length(1), // First row is ONLY the tab bar
+            Constraint::Min(10),   // Content area
+            Constraint::Length(1), // Single-line footer
         ])
         .split(size);
 
-    render_header(f, chunks[0], app, &app.theme);
-    render_tab_bar(f, chunks[1], app.current_tab, &app.theme);
+    render_tab_bar(f, chunks[0], app.current_tab, &app.theme);
 
     match app.current_tab {
-        ActiveTab::Dashboard => dashboard::render_dashboard(f, app, chunks[2]),
-        ActiveTab::Power => power::render_power(f, app, chunks[2]),
-        ActiveTab::FanCurves => fancurve::render_fancurve(f, app, chunks[2]),
-        ActiveTab::Aura => aura::render_aura(f, app, chunks[2]),
-        ActiveTab::Gpu => gpu::render_gpu(f, app, chunks[2]),
-        ActiveTab::Armoury => armoury::render_armoury(f, app, chunks[2]),
-        ActiveTab::About => about::render_about(f, app, chunks[2]),
+        ActiveTab::Dashboard => dashboard::render_dashboard(f, app, chunks[1]),
+        ActiveTab::Power => power::render_power(f, app, chunks[1]),
+        ActiveTab::FanCurves => fancurve::render_fancurve(f, app, chunks[1]),
+        ActiveTab::Aura => aura::render_aura(f, app, chunks[1]),
+        ActiveTab::System => system::render_system(f, app, chunks[1]),
     }
 
-    render_footer(f, chunks[3], app, &app.theme);
+    render_footer(f, chunks[2], app, &app.theme);
 
     if app.show_help {
         render_help_overlay(f, size, app.current_tab, &app.theme);
@@ -75,14 +68,14 @@ fn render_terminal_too_small(f: &mut Frame, area: Rect, theme: &crate::ui::theme
         Line::from(""),
         Line::from(Span::raw(format!("Current: {}x{}", area.width, area.height))),
         Line::from(Span::styled(
-            "Required: at least 60x16",
+            "Required: at least 80x24",
             Style::default().fg(theme.warn),
         )),
         Line::from(""),
-        Line::from(Span::raw("Resize the terminal to continue.")),
+        Line::from(Span::raw("Please resize your terminal window to continue.")),
     ];
     let widget = Paragraph::new(msg)
         .alignment(Alignment::Center)
-        .block(panel_block(" Warning ", false, theme));
+        .block(panel_block(" Notice ", false, theme));
     f.render_widget(widget, area);
 }

@@ -8,234 +8,141 @@ use ratatui::{
 
 use crate::app::AppState;
 use crate::backend::Backend;
-use crate::ui::widgets::panel_block;
+use crate::ui::widgets::{
+    choice_widget, label_value_row, render_hint_line, section_rule, slider_widget,
+};
 
 pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let theme = &app.theme;
-    let is_narrow = area.width < 100;
 
-    let chunks = if is_narrow {
-        vec![area]
-    } else {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(area)
-            .to_vec()
-    };
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Top spacing
+            Constraint::Min(12),   // Power settings list
+            Constraint::Length(1), // Bottom hint line
+        ])
+        .split(area);
 
-    // -------------------------------------------------------------------------
-    // Left Pane: Settings List
-    // -------------------------------------------------------------------------
-    let settings_block = panel_block(" Power & Battery Settings ", true, theme);
-    let settings_inner = settings_block.inner(chunks[0]);
-    f.render_widget(settings_block, chunks[0]);
-
-    let bat_gauge_width = (settings_inner.width.saturating_sub(42) as usize).clamp(8, 16);
-    let bat_filled = (app.charge_limit as usize * bat_gauge_width) / 100;
-    let bat_empty = bat_gauge_width.saturating_sub(bat_filled);
-    let bat_gauge_str = format!("{}% [{}{}]", app.charge_limit, "█".repeat(bat_filled), "░".repeat(bat_empty));
-
-    let fields = [
-        // 0: Profiles group
-        (
-            0,
-            "Profiles",
-            "Active Platform Profile",
-            format!("< {} >", app.platform_profile.as_str()),
-        ),
-        (
-            1,
-            "Profiles",
-            "AC Profile Binding",
-            format!("< {} >", app.profile_ac.as_str()),
-        ),
-        (
-            2,
-            "Profiles",
-            "Battery Profile Binding",
-            format!("< {} >", app.profile_battery.as_str()),
-        ),
-        (
-            3,
-            "Profiles",
-            "Auto-apply AC Profile",
-            if app.auto_ac { "[x] Enabled".to_string() } else { "[ ] Disabled".to_string() },
-        ),
-        (
-            4,
-            "Profiles",
-            "Auto-apply Battery Profile",
-            if app.auto_battery { "[x] Enabled".to_string() } else { "[ ] Disabled".to_string() },
-        ),
-        // 5: Battery group
-        (
-            5,
-            "Battery",
-            "Battery Charge Limit",
-            format!("< {bat_gauge_str} >"),
-        ),
-        (
-            6,
-            "Battery",
-            "One-Shot Full Charge",
-            "[ Trigger 100% until unplug ]".to_string(),
-        ),
-        // 7: Power Tuning group
-        (
-            7,
-            "Power Tuning",
-            "Link Profile to CPU EPP",
-            if app.linked_epp { "[x] Enabled".to_string() } else { "[ ] Disabled".to_string() },
-        ),
-        (
-            8,
-            "Power Tuning",
-            "Disable NV Powerd on Battery",
-            if app.disable_powerd_battery { "[x] Enabled".to_string() } else { "[ ] Disabled".to_string() },
-        ),
-    ];
+    let content_area = chunks[1];
+    let width = content_area.width as usize;
+    let label_width = 20;
 
     let mut lines = Vec::new();
-    let mut current_group = "";
 
-    for (idx, group, label, val) in &fields {
-        if *group != current_group {
-            if !current_group.is_empty() {
-                lines.push(Line::from(""));
-            }
-            lines.push(Line::from(Span::styled(
-                format!("  -- {group} --"),
-                Style::default().fg(theme.dim),
-            )));
-            current_group = group;
-        }
+    // -------------------------------------------------------------------------
+    // 1. Profile Section
+    // -------------------------------------------------------------------------
+    lines.push(section_rule("Profile", width.saturating_sub(4), theme));
+    lines.push(Line::from(""));
 
-        let is_selected = app.power_selected_field == *idx;
-        let line_content = format!("  {label: <30}: {val}");
-        let total_w = settings_inner.width as usize;
-        let padded_line = if line_content.len() < total_w {
-            format!("{}{}", line_content, " ".repeat(total_w - line_content.len()))
-        } else {
-            line_content
-        };
+    // Row 0: Active Profile
+    let active_spans = choice_widget(app.platform_profile.as_str(), app.power_selected_field == 0, theme);
+    lines.push(label_value_row("Active profile", active_spans, app.power_selected_field == 0, label_width, theme));
 
-        if is_selected {
-            lines.push(Line::from(Span::styled(padded_line, theme.sel_style())));
-        } else {
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {label: <30}: "), Style::default().fg(theme.dim)),
-                Span::styled(val.clone(), Style::default().fg(theme.fg)),
-            ]));
-        }
+    // Row 1: When plugged in
+    let ac_label = if app.auto_ac {
+        app.profile_ac.as_str()
+    } else {
+        "Off"
+    };
+    let ac_spans = choice_widget(ac_label, app.power_selected_field == 1, theme);
+    lines.push(label_value_row("When plugged in", ac_spans, app.power_selected_field == 1, label_width, theme));
 
-        if *idx == 6 {
-            let bat_status = if app.sensors.battery_status.is_empty() {
-                "Not charging"
+    // Row 2: On battery
+    let bat_label = if app.auto_battery {
+        app.profile_battery.as_str()
+    } else {
+        "Off"
+    };
+    let bat_spans = choice_widget(bat_label, app.power_selected_field == 2, theme);
+    lines.push(label_value_row("On battery", bat_spans, app.power_selected_field == 2, label_width, theme));
+    lines.push(Line::from(""));
+
+    // -------------------------------------------------------------------------
+    // 2. Battery Section
+    // -------------------------------------------------------------------------
+    lines.push(section_rule("Battery", width.saturating_sub(4), theme));
+    lines.push(Line::from(""));
+
+    // Row 3: Charge Limit Slider
+    let slider_width = 16.min(width.saturating_sub(label_width + 16));
+    let limit_spans = slider_widget(
+        app.charge_limit as u32,
+        20,
+        100,
+        slider_width,
+        "%",
+        app.power_selected_field == 3,
+        theme,
+    );
+    lines.push(label_value_row("Charge limit", limit_spans, app.power_selected_field == 3, label_width, theme));
+
+    // Row 4: One-Shot Full Charge
+    let one_shot_spans = vec![
+        Span::styled(
+            "[ Charge to 100% once ]",
+            if app.power_selected_field == 4 {
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
             } else {
-                app.sensors.battery_status.as_str()
-            };
-            let bat_health = app.sensors.battery_health_percent.unwrap_or(98);
-            let bat_power_str = if let Some(w) = app.sensors.battery_power_w {
-                if w > 0.05 { format!("{w:.1} W") } else { "0.0 W (AC Wall Power)".to_string() }
-            } else {
-                "0.0 W (AC Wall Power)".to_string()
-            };
-            let bat_cycles_str = match app.sensors.battery_cycle_count {
-                Some(c) if c > 0 => format!("{c} cycles"),
-                _ => "n/a".to_string(),
-            };
+                Style::default().fg(theme.dim)
+            },
+        ),
+    ];
+    lines.push(label_value_row("Full charge override", one_shot_spans, app.power_selected_field == 4, label_width, theme));
 
-            lines.push(Line::from(vec![
-                Span::styled("    Battery Health   : ", Style::default().fg(theme.dim)),
-                Span::styled(format!("{bat_health}% (90 Wh Li-ion, cycles: {bat_cycles_str})"), Style::default().fg(theme.ok)),
-            ]));
-            lines.push(Line::from(vec![
-                Span::styled("    State & Draw     : ", Style::default().fg(theme.dim)),
-                Span::styled(format!("{bat_status} ({bat_power_str})"), Style::default().fg(theme.fg)),
-            ]));
+    // Read-only battery metadata rows
+    let bat_state_str = if app.sensors.battery_status.is_empty() {
+        "Plugged in, not charging".to_string()
+    } else {
+        match app.sensors.battery_status.as_str() {
+            "Not charging" => "Plugged in, not charging".to_string(),
+            "Charging" => "Charging".to_string(),
+            "Discharging" => "Discharging".to_string(),
+            "Full" => "Full".to_string(),
+            other => other.to_string(),
+        }
+    };
+    lines.push(label_value_row(
+        "State",
+        vec![Span::styled(bat_state_str, Style::default().fg(theme.fg))],
+        false,
+        label_width,
+        theme,
+    ));
+
+    let health_pct = app.sensors.battery_health_percent.unwrap_or(98);
+    lines.push(label_value_row(
+        "Health",
+        vec![Span::styled(format!("{health_pct}%"), Style::default().fg(theme.ok))],
+        false,
+        label_width,
+        theme,
+    ));
+
+    // Battery cycles: only display if cycle_count > 0
+    if let Some(cycles) = app.sensors.battery_cycle_count {
+        if cycles > 0 {
+            lines.push(label_value_row(
+                "Cycles",
+                vec![Span::styled(format!("{cycles}"), Style::default().fg(theme.fg))],
+                false,
+                label_width,
+                theme,
+            ));
         }
     }
 
-    f.render_widget(Paragraph::new(lines), settings_inner);
+    f.render_widget(Paragraph::new(lines), content_area);
 
-    // -------------------------------------------------------------------------
-    // Right Pane: Details / Explanation
-    // -------------------------------------------------------------------------
-    if !is_narrow {
-        let details_block = panel_block(" Setting Details ", false, theme);
-        let details_inner = details_block.inner(chunks[1]);
-        f.render_widget(details_block, chunks[1]);
-
-        let (sel_title, sel_desc, sel_effect) = match app.power_selected_field {
-            0 => (
-                "Active Platform Profile",
-                "Controls CPU TDP package limits, fan curve aggression, and system energy policy via asusd and the ASUS ACPI platform_profile interface.",
-                "Quiet: 25W TDP / silent fan ceiling\nBalanced: 45W TDP / dynamic fans\nPerformance: 75W+ TDP / full boost",
-            ),
-            1 => (
-                "AC Profile Binding",
-                "Specifies which platform profile asusd automatically restores when the laptop connects to AC power (barrel jack or USB-PD).",
-                "Hardware auto-switches to this profile upon plug-in event.",
-            ),
-            2 => (
-                "Battery Profile Binding",
-                "Specifies which platform profile asusd automatically engages when operating on battery.",
-                "Enables power saving and quieter acoustic floor on battery.",
-            ),
-            3 => (
-                "Auto-apply AC Profile",
-                "Enables udev event listener in asusd to automatically engage the AC Profile Binding when plugged in.",
-                "Instant, hands-free power state transition on AC connection.",
-            ),
-            4 => (
-                "Auto-apply Battery Profile",
-                "Enables udev event listener in asusd to automatically switch to the Battery Profile Binding upon AC disconnect.",
-                "Protects battery runtime when unplugging on the go.",
-            ),
-            5 => (
-                "Battery Charge Limit",
-                "Writes a hardware threshold to the ASUS embedded controller via sysfs charge_control_limit.",
-                "Stops charging at the specified percentage (e.g. 80%) to minimize lithium chemical degradation during continuous AC use.",
-            ),
-            6 => (
-                "One-Shot Full Charge",
-                "Temporarily lifts the battery charge limit to 100% until the next unplug event.",
-                "Allows charging to 100% before travel without having to permanently change your battery threshold.",
-            ),
-            7 => (
-                "Link Profile to CPU EPP",
-                "Binds the Intel CPU Energy Performance Preference (EPP) directly to the active platform profile.",
-                "Quiet -> power\nBalanced -> balance_performance\nPerformance -> performance",
-            ),
-            8 => (
-                "Disable NVIDIA Powerd on Battery",
-                "Stops nvidia-powerd from waking up the discrete GPU while on battery.",
-                "Ensures the RTX 5050 Mobile stays suspended in D3cold power state.",
-            ),
-            _ => ("Setting", "Select a setting to view details.", ""),
-        };
-
-        let mut detail_lines = vec![
-            Line::from(Span::styled(
-                format!("  {sel_title}"),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(Span::styled("  Description:", Style::default().fg(theme.dim))),
-        ];
-        for l in sel_desc.lines() {
-            detail_lines.push(Line::from(Span::styled(format!("  {l}"), Style::default().fg(theme.fg))));
-        }
-        detail_lines.push(Line::from(""));
-        detail_lines.push(Line::from(Span::styled("  Hardware Effect:", Style::default().fg(theme.dim))));
-        for l in sel_effect.lines() {
-            detail_lines.push(Line::from(Span::styled(format!("  {l}"), Style::default().fg(theme.ok))));
-        }
-        detail_lines.push(Line::from(""));
-        detail_lines.push(Line::from(Span::styled("  Navigation:", Style::default().fg(theme.dim))));
-        detail_lines.push(Line::from(Span::styled("  Use 'h' / 'l' or Enter / Space to adjust values.", Style::default().fg(theme.dim))));
-
-        f.render_widget(Paragraph::new(detail_lines), details_inner);
-    }
+    // Bottom Hint Line
+    let hint_text = match app.power_selected_field {
+        0 => "h/l: cycle active profile   Enter: apply",
+        1 => "h/l: set AC plugged-in profile (or Off)",
+        2 => "h/l: set on-battery profile (or Off)",
+        3 => "h/l: adjust charge threshold (+/- 5%)",
+        4 => "Enter: temporarily charge to 100% until power unplugged",
+        _ => "",
+    };
+    render_hint_line(f, chunks[2], hint_text, theme);
 }

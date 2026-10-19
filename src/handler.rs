@@ -220,9 +220,7 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         KeyCode::Char('2') => { app.current_tab = ActiveTab::Power; return; }
         KeyCode::Char('3') => { app.current_tab = ActiveTab::FanCurves; return; }
         KeyCode::Char('4') => { app.current_tab = ActiveTab::Aura; return; }
-        KeyCode::Char('5') => { app.current_tab = ActiveTab::Gpu; return; }
-        KeyCode::Char('6') => { app.current_tab = ActiveTab::Armoury; return; }
-        KeyCode::Char('7') => { app.current_tab = ActiveTab::About; return; }
+        KeyCode::Char('5') => { app.current_tab = ActiveTab::System; return; }
         KeyCode::Char('p') => {
             let next_p = match app.platform_profile {
                 PlatformProfile::Quiet => PlatformProfile::Balanced,
@@ -242,7 +240,7 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                 let new_curves = app.backend.get_fan_curves(next_p).await.unwrap_or_default();
                 app.applied_fan_curves = new_curves.clone();
                 app.fan_curves = new_curves;
-                app.set_status(format!("Platform Profile: {}", next_p.as_str()), false);
+                app.set_status(format!("Profile set to {}", next_p.as_str()), false);
             }
             return;
         }
@@ -255,111 +253,135 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         ActiveTab::Power => handle_power(app, key).await,
         ActiveTab::FanCurves => handle_fancurve(app, key).await,
         ActiveTab::Aura => handle_aura(app, key).await,
-        ActiveTab::Gpu => handle_gpu(app, key).await,
-        ActiveTab::Armoury => handle_armoury(app, key).await,
-        ActiveTab::About => handle_about(app, key).await,
+        ActiveTab::System => handle_system(app, key).await,
     }
 }
 
 async fn handle_dashboard<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
+    if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+        let next_p = match app.platform_profile {
+            PlatformProfile::Quiet => PlatformProfile::Balanced,
+            PlatformProfile::Balanced => PlatformProfile::Performance,
+            PlatformProfile::Performance => PlatformProfile::Quiet,
+            PlatformProfile::Custom => PlatformProfile::Balanced,
+        };
+        if let Err(e) = app.backend.set_platform_profile(next_p).await {
+            app.set_status(format!("Error setting profile: {e}"), true);
+        } else {
+            app.platform_profile = next_p;
+            app.set_status(format!("Profile set to {}", next_p.as_str()), false);
+        }
+    }
+}
+
+async fn handle_system<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
+    let can_switch_gpu = app.gpu_supported.len() > 1;
+    let max_rows = if can_switch_gpu { 3 } else { 2 };
+
     match key.code {
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            let next_p = match app.platform_profile {
-                PlatformProfile::Quiet => PlatformProfile::Balanced,
-                PlatformProfile::Balanced => PlatformProfile::Performance,
-                PlatformProfile::Performance => PlatformProfile::Quiet,
-                PlatformProfile::Custom => PlatformProfile::Balanced,
-            };
-            if let Err(e) = app.backend.set_platform_profile(next_p).await {
-                app.set_status(format!("Error setting profile: {e}"), true);
+        KeyCode::Down | KeyCode::Char('j') => {
+            app.system_selected_row = (app.system_selected_row + 1) % max_rows;
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            app.system_selected_row = (app.system_selected_row + max_rows - 1) % max_rows;
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            if app.system_selected_row == 2 && can_switch_gpu {
+                if app.gpu_selected_idx > 0 {
+                    app.gpu_selected_idx -= 1;
+                } else {
+                    app.gpu_selected_idx = app.gpu_supported.len() - 1;
+                }
             } else {
-                app.platform_profile = next_p;
-                app.set_status(format!("Platform profile: {}", next_p.as_str()), false);
+                toggle_system_row(app).await;
             }
         }
-        KeyCode::Char('a') | KeyCode::Char('A') => {
-            app.show_advanced_power_modal = true;
+        KeyCode::Right | KeyCode::Char('l') => {
+            if app.system_selected_row == 2 && can_switch_gpu {
+                app.gpu_selected_idx = (app.gpu_selected_idx + 1) % app.gpu_supported.len();
+            } else {
+                toggle_system_row(app).await;
+            }
         }
-        KeyCode::Char('o') | KeyCode::Char('O') => {
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            if app.system_selected_row == 2 && can_switch_gpu {
+                if let Some(&target_mode) = app.gpu_supported.get(app.gpu_selected_idx) {
+                    if target_mode != app.gpu_mode {
+                        app.confirm_modal = Some((
+                            format!("Switch GPU mode to {}? Requires reboot/logout.", target_mode.as_str()),
+                            ConfirmAction::SwitchGpu(target_mode),
+                        ));
+                    }
+                }
+            } else {
+                toggle_system_row(app).await;
+            }
+        }
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            export_system_report(app);
+        }
+        _ => {}
+    }
+}
+
+async fn toggle_system_row<B: Backend>(app: &mut AppState<B>) {
+    match app.system_selected_row {
+        0 => {
             let cur = app.sensors.panel_overdrive.unwrap_or(true);
             let next_val = if cur { 0 } else { 1 };
             if let Err(e) = app.backend.set_armoury_attribute("panel_overdrive", next_val).await {
                 app.set_status(format!("Failed to toggle Panel Overdrive: {e}"), true);
             } else {
                 app.sensors.panel_overdrive = Some(next_val == 1);
-                app.set_status(
-                    format!("Panel Overdrive {}", if next_val == 1 { "Enabled (3ms)" } else { "Disabled" }),
-                    false,
-                );
+                app.set_status(format!("Panel Overdrive {}", if next_val == 1 { "enabled" } else { "disabled" }), false);
             }
         }
-        KeyCode::Char('b') | KeyCode::Char('B') => {
+        1 => {
             let cur = app.sensors.screen_auto_brightness.unwrap_or(false);
             let next_val = if cur { 0 } else { 1 };
             if let Err(e) = app.backend.set_armoury_attribute("screen_auto_brightness", next_val).await {
                 app.set_status(format!("Failed to toggle Auto-Brightness: {e}"), true);
             } else {
                 app.sensors.screen_auto_brightness = Some(next_val == 1);
-                app.set_status(
-                    format!("Screen Auto-Brightness {}", if next_val == 1 { "Enabled (ALS)" } else { "Disabled" }),
-                    false,
-                );
+                app.set_status(format!("Auto-Brightness {}", if next_val == 1 { "enabled" } else { "disabled" }), false);
             }
-        }
-        KeyCode::Char('l') | KeyCode::Char('L') => {
-            app.toggle_metrics_logging();
         }
         _ => {}
     }
 }
 
-async fn handle_about<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
-    if matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y')) {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let diag_path = format!("{home}/rogtui-diagnostics.txt");
+fn export_system_report<B: Backend>(app: &mut AppState<B>) {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let diag_path = format!("{home}/rogtui-diagnostics.txt");
 
-        let mut doc = String::new();
-        doc.push_str("================================================================================\n");
-        doc.push_str("rogtui System Diagnostics & Hardware Capabilities Report\n");
-        doc.push_str("================================================================================\n\n");
-        doc.push_str("Machine: ASUS TUF Gaming F16 (FX608JH)\n");
-        doc.push_str("rogtui Version: v0.1.0\n");
-        doc.push_str(&format!("Kernel Version: {}\n", std::fs::read_to_string("/proc/version").unwrap_or_default().trim()));
-        doc.push_str(&format!("Platform Profile: {}\n", app.platform_profile.as_str()));
-        doc.push_str(&format!("GPU Mode: {}\n", app.gpu_mode.as_str()));
-        doc.push_str(&format!("GPU Power State: {}\n", app.gpu_power.as_str()));
-        doc.push_str(&format!("Battery Charge: {}% (Limit: {}%)\n", app.sensors.battery_charge_percent.unwrap_or(0), app.charge_limit));
-        doc.push_str(&format!("Battery Health: {}%\n", app.sensors.battery_health_percent.unwrap_or(98)));
-        doc.push_str(&format!("Aura Brightness: {}\n", app.aura_brightness));
-        doc.push_str(&format!("Aura Mode: {}\n\n", app.aura_mode));
+    let mut doc = String::new();
+    doc.push_str("rogtui System Diagnostics & Hardware Capabilities Report\n\n");
+    doc.push_str(&format!("Model: {}\n", crate::ui::system::detect_model()));
+    doc.push_str(&format!("BIOS: {}\n", crate::ui::system::detect_bios()));
+    doc.push_str(&format!("Kernel: {}\n", crate::ui::system::detect_kernel()));
+    doc.push_str(&format!("Session: {}\n", crate::ui::system::detect_session()));
+    doc.push_str(&format!("Display: {}\n", crate::ui::system::detect_display()));
+    doc.push_str(&format!("ROGTUI Version: {}\n", env!("CARGO_PKG_VERSION")));
+    doc.push_str(&format!("Platform Profile: {}\n", app.platform_profile.as_str()));
+    doc.push_str(&format!("GPU Mode: {}\n", app.gpu_mode.as_str()));
+    doc.push_str(&format!("Battery Charge: {}% (Limit: {}%)\n", app.sensors.battery_charge_percent.unwrap_or(0), app.charge_limit));
+    doc.push_str(&format!("Battery Health: {}%\n", app.sensors.battery_health_percent.unwrap_or(98)));
+    doc.push_str(&format!("Aura Brightness: {}\n", app.aura_brightness));
+    doc.push_str(&format!("Aura Mode: {}\n", app.aura_mode));
 
-        doc.push_str("--- Armoury Attributes Status ---\n");
-        for attr in &app.armoury_attributes {
-            doc.push_str(&format!("  {:<25}: available={}, value={}\n", attr.node_name, attr.is_available, attr.current_value));
-        }
-
-        doc.push_str("\n--- Fan Curves Configuration ---\n");
-        for curve in &app.fan_curves {
-            doc.push_str(&format!("  Fan: {} (enabled={})\n", curve.fan_name, curve.enabled));
-            for (i, pt) in curve.points.iter().enumerate() {
-                doc.push_str(&format!("    pt{}: {} C -> {}%\n", i + 1, pt.temp, pt.pwm_percent));
-            }
-        }
-
-        match std::fs::write(&diag_path, doc) {
-            Ok(_) => app.set_status(format!("Exported diagnostics to {diag_path}"), false),
-            Err(e) => app.set_status(format!("Failed to write diagnostics: {e}"), true),
-        }
+    match std::fs::write(&diag_path, doc) {
+        Ok(_) => app.set_status(format!("Exported report to {diag_path}"), false),
+        Err(e) => app.set_status(format!("Failed to write report: {e}"), true),
     }
 }
 
 async fn handle_power<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
-            app.power_selected_field = (app.power_selected_field + 1) % 9;
+            app.power_selected_field = (app.power_selected_field + 1) % 5;
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            app.power_selected_field = (app.power_selected_field + 8) % 9;
+            app.power_selected_field = (app.power_selected_field + 4) % 5;
         }
         KeyCode::Left | KeyCode::Char('h') => {
             adjust_power_field(app, -1).await;
@@ -380,66 +402,76 @@ async fn adjust_power_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let next_p = cycle_profile(app.platform_profile, dir);
             if app.backend.set_platform_profile(next_p).await.is_ok() {
                 app.platform_profile = next_p;
-                app.set_status(format!("Active profile: {}", next_p.as_str()), false);
+                app.set_status(format!("Profile set to {}", next_p.as_str()), false);
             }
         }
         1 => {
-            let next_p = cycle_profile(app.profile_ac, dir);
-            if app.backend.set_profile_ac(next_p).await.is_ok() {
-                app.profile_ac = next_p;
-                app.set_status(format!("AC Profile: {}", next_p.as_str()), false);
+            let options = [None, Some(PlatformProfile::Quiet), Some(PlatformProfile::Balanced), Some(PlatformProfile::Performance)];
+            let cur_idx = if !app.auto_ac { 0 } else {
+                match app.profile_ac {
+                    PlatformProfile::Quiet => 1,
+                    PlatformProfile::Balanced => 2,
+                    PlatformProfile::Performance => 3,
+                    _ => 2,
+                }
+            };
+            let next_idx = ((cur_idx + dir + 4) % 4) as usize;
+            match options[next_idx] {
+                None => {
+                    let _ = app.backend.set_auto_ac(false).await;
+                    app.auto_ac = false;
+                    app.set_status("When plugged in: Off", false);
+                }
+                Some(p) => {
+                    let _ = app.backend.set_auto_ac(true).await;
+                    let _ = app.backend.set_profile_ac(p).await;
+                    app.auto_ac = true;
+                    app.profile_ac = p;
+                    app.set_status(format!("When plugged in: {}", p.as_str()), false);
+                }
             }
         }
         2 => {
-            let next_p = cycle_profile(app.profile_battery, dir);
-            if app.backend.set_profile_battery(next_p).await.is_ok() {
-                app.profile_battery = next_p;
-                app.set_status(format!("Battery Profile: {}", next_p.as_str()), false);
+            let options = [None, Some(PlatformProfile::Quiet), Some(PlatformProfile::Balanced), Some(PlatformProfile::Performance)];
+            let cur_idx = if !app.auto_battery { 0 } else {
+                match app.profile_battery {
+                    PlatformProfile::Quiet => 1,
+                    PlatformProfile::Balanced => 2,
+                    PlatformProfile::Performance => 3,
+                    _ => 1,
+                }
+            };
+            let next_idx = ((cur_idx + dir + 4) % 4) as usize;
+            match options[next_idx] {
+                None => {
+                    let _ = app.backend.set_auto_battery(false).await;
+                    app.auto_battery = false;
+                    app.set_status("On battery: Off", false);
+                }
+                Some(p) => {
+                    let _ = app.backend.set_auto_battery(true).await;
+                    let _ = app.backend.set_profile_battery(p).await;
+                    app.auto_battery = true;
+                    app.profile_battery = p;
+                    app.set_status(format!("On battery: {}", p.as_str()), false);
+                }
             }
         }
         3 => {
-            let new_v = !app.auto_ac;
-            if app.backend.set_auto_ac(new_v).await.is_ok() {
-                app.auto_ac = new_v;
-                app.set_status(format!("Auto-switch on AC: {new_v}"), false);
-            }
-        }
-        4 => {
-            let new_v = !app.auto_battery;
-            if app.backend.set_auto_battery(new_v).await.is_ok() {
-                app.auto_battery = new_v;
-                app.set_status(format!("Auto-switch on Battery: {new_v}"), false);
-            }
-        }
-        5 => {
             let step = (dir * 5) as i16;
             let current = app.charge_limit as i16;
             let clamped = (current + step).clamp(20, 100) as u8;
             if app.backend.set_charge_limit(clamped).await.is_ok() {
                 app.charge_limit = clamped;
                 app.sensors.battery_charge_limit = clamped;
-                app.set_status(format!("Charge Limit set to {clamped}%"), false);
+                app.set_status(format!("Charge limit set to {clamped}%"), false);
             }
         }
-        6 => {
+        4 => {
             if app.backend.one_shot_full_charge().await.is_ok() {
-                app.set_status("One-shot full charge activated (will charge to 100% until unplugged)", false);
+                app.set_status("Full charge override active (100% until disconnect)", false);
             } else {
-                app.set_status("Failed to trigger one-shot full charge", true);
-            }
-        }
-        7 => {
-            let new_v = !app.linked_epp;
-            if app.backend.set_linked_epp(new_v).await.is_ok() {
-                app.linked_epp = new_v;
-                app.set_status(format!("Linked EPP: {new_v}"), false);
-            }
-        }
-        8 => {
-            let new_v = !app.disable_powerd_battery;
-            if app.backend.set_disable_nvidia_powerd_battery(new_v).await.is_ok() {
-                app.disable_powerd_battery = new_v;
-                app.set_status(format!("Disable NV Powerd on Battery: {new_v}"), false);
+                app.set_status("Failed to trigger full charge override", true);
             }
         }
         _ => {}
@@ -709,16 +741,18 @@ async fn apply_fancurves<B: Backend>(app: &mut AppState<B>) {
     }
 }
 
-fn next_aura_field(current: usize, dir: i32, brightness: u32) -> usize {
-    let accessible: &[usize] = if brightness == 0 {
+fn next_aura_field<B: Backend>(app: &AppState<B>, current: usize, dir: i32) -> usize {
+    let all: &[usize] = if app.aura_brightness == 0 {
         &[0, 9, 10, 11, 12]
     } else {
-        &[
-            0, 1, 7, 8,                     // Panel 1: Brightness, Mode, Speed, Direction
-            2, 3, 4, 5, 6,                  // Panel 2: Color Preset, R, G, B, Secondary Color
-            9, 10, 11, 12,                  // Panel 3: Hardware Power States (bottom bar)
-        ]
+        &[0, 1, 7, 8, 2, 3, 4, 5, 6, 9, 10, 11, 12]
     };
+
+    let accessible: Vec<usize> = all
+        .iter()
+        .copied()
+        .filter(|&f| crate::ui::aura::is_aura_field_supported(app, f))
+        .collect();
 
     let cur_pos = accessible.iter().position(|&f| f == current).unwrap_or(0);
     let count = accessible.len() as i32;
@@ -729,10 +763,10 @@ fn next_aura_field(current: usize, dir: i32, brightness: u32) -> usize {
 async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
-            app.aura_selected_field = next_aura_field(app.aura_selected_field, 1, app.aura_brightness);
+            app.aura_selected_field = next_aura_field(app, app.aura_selected_field, 1);
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            app.aura_selected_field = next_aura_field(app.aura_selected_field, -1, app.aura_brightness);
+            app.aura_selected_field = next_aura_field(app, app.aura_selected_field, -1);
         }
         KeyCode::Left | KeyCode::Char('h') => {
             if (10..=12).contains(&app.aura_selected_field) {
@@ -1011,177 +1045,4 @@ async fn adjust_picker_slider<B: Backend>(app: &mut AppState<B>, dir: i32) {
     }
 }
 
-async fn handle_gpu<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
-    match key.code {
-        KeyCode::Down | KeyCode::Char('j') => {
-            if !app.gpu_supported.is_empty() {
-                app.gpu_selected_idx = (app.gpu_selected_idx + 1) % app.gpu_supported.len();
-            }
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if !app.gpu_supported.is_empty() {
-                app.gpu_selected_idx = (app.gpu_selected_idx + app.gpu_supported.len() - 1) % app.gpu_supported.len();
-            }
-        }
-        KeyCode::Enter => {
-            if let Some(&mode) = app.gpu_supported.get(app.gpu_selected_idx) {
-                if mode == app.gpu_mode {
-                    app.set_status(format!("{} is already the active mode", mode.as_str()), false);
-                } else {
-                    app.confirm_modal = Some((
-                        format!("Switch GPU mode to {}? A session logout or reboot may be required.", mode.as_str()),
-                        ConfirmAction::SwitchGpu(mode),
-                    ));
-                }
-            }
-        }
-        _ => {}
-    }
-}
 
-async fn handle_armoury<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
-    if app.armoury_attributes.is_empty() {
-        return;
-    }
-    match key.code {
-        KeyCode::Char('u') => {
-            app.show_unavailable_armoury = !app.show_unavailable_armoury;
-            app.set_status(
-                if app.show_unavailable_armoury {
-                    "Unavailable attributes: shown"
-                } else {
-                    "Unavailable attributes: collapsed"
-                },
-                false,
-            );
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            let visible_indices: Vec<usize> = app
-                .armoury_attributes
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| a.is_available || app.show_unavailable_armoury)
-                .map(|(i, _)| i)
-                .collect();
-            if !visible_indices.is_empty() {
-                let cur_pos = visible_indices.iter().position(|&i| i == app.armoury_selected_idx).unwrap_or(0);
-                let next_pos = (cur_pos + 1) % visible_indices.len();
-                app.armoury_selected_idx = visible_indices[next_pos];
-            }
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            let visible_indices: Vec<usize> = app
-                .armoury_attributes
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| a.is_available || app.show_unavailable_armoury)
-                .map(|(i, _)| i)
-                .collect();
-            if !visible_indices.is_empty() {
-                let cur_pos = visible_indices.iter().position(|&i| i == app.armoury_selected_idx).unwrap_or(0);
-                let next_pos = (cur_pos + visible_indices.len() - 1) % visible_indices.len();
-                app.armoury_selected_idx = visible_indices[next_pos];
-            }
-        }
-        KeyCode::Left | KeyCode::Char('h') => {
-            adjust_armoury_attr(app, -1).await;
-        }
-        KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
-            adjust_armoury_attr(app, 1).await;
-        }
-        KeyCode::Char('r') => {
-            if let Some(attr) = app.armoury_attributes.get(app.armoury_selected_idx).cloned() {
-                if attr.is_available {
-                    app.confirm_modal = Some((
-                        format!("Restore factory BIOS default for {}?", attr.display_name),
-                        ConfirmAction::RestoreArmouryDefault {
-                            node_name: attr.node_name,
-                            display_name: attr.display_name,
-                        },
-                    ));
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-async fn adjust_armoury_attr<B: Backend>(app: &mut AppState<B>, dir: i32) {
-    if let Some(attr) = app.armoury_attributes.get(app.armoury_selected_idx).cloned() {
-        if !attr.is_available {
-            return;
-        }
-        let node = attr.node_name.clone();
-        let new_val = match attr.kind {
-            crate::backend::types::AttributeKind::Toggle => {
-                if attr.current_value == 1 { 0 } else { 1 }
-            }
-            crate::backend::types::AttributeKind::Enum => {
-                if attr.possible_values.is_empty() {
-                    return;
-                }
-                let cur_idx = attr.possible_values.iter().position(|v| *v == attr.current_value).unwrap_or(0);
-                let count = attr.possible_values.len() as i32;
-                let next_idx = ((cur_idx as i32 + dir + count) % count) as usize;
-                attr.possible_values[next_idx]
-            }
-            crate::backend::types::AttributeKind::Slider => {
-                let inc = if attr.scalar_increment > 0 { attr.scalar_increment } else { 1 };
-                (attr.current_value + dir * inc).clamp(attr.min_value, attr.max_value)
-            }
-            crate::backend::types::AttributeKind::ReadOnly => return,
-        };
-
-        if new_val == attr.current_value {
-            return;
-        }
-
-        // Extra confirmation modal for hardware-sensitive switches and power limits
-        let is_sensitive = matches!(
-            node.as_str(),
-            "gpu_mux_mode"
-                | "dgpu_disable"
-                | "ppt_pl1_spl"
-                | "ppt_pl2_sppt"
-                | "nv_base_tgp"
-                | "nv_tgp"
-                | "nv_temp_target"
-                | "charge_mode"
-        );
-
-        if is_sensitive {
-            let msg = if node == "gpu_mux_mode" || node == "dgpu_disable" {
-                let label = if node == "gpu_mux_mode" {
-                    if new_val == 0 { "dGPU Direct (MUX)" } else { "Optimus / Hybrid" }
-                } else if new_val == 1 {
-                    "Disabled (dGPU off)"
-                } else {
-                    "Enabled (dGPU on)"
-                };
-                format!("Switch {} to {}? This hardware change requires a reboot.", attr.display_name, label)
-            } else {
-                format!("Apply hardware setting for {}: {} -> {}?", attr.display_name, attr.current_value, new_val)
-            };
-
-            app.confirm_modal = Some((
-                msg,
-                ConfirmAction::ApplyArmouryAttr {
-                    node_name: node,
-                    value: new_val,
-                    display_name: attr.display_name,
-                },
-            ));
-            return;
-        }
-
-        match app.backend.set_armoury_attribute(&node, new_val).await {
-            Ok(()) => {
-                if let Some(a) = app.armoury_attributes.get_mut(app.armoury_selected_idx) {
-                    a.current_value = new_val;
-                }
-                app.set_status(format!("{} updated to {new_val}", attr.display_name), false);
-            }
-            Err(e) => app.set_status(format!("Failed to write attribute: {e}"), true),
-        }
-    }
-}
