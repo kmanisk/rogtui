@@ -103,8 +103,12 @@ async fn app_loop<B: backend::Backend>(
     let mut app = AppState::new(backend).await?;
 
     let mut event_reader = EventStream::new();
-    let mut ticker = tokio::time::interval(Duration::from_secs(1));
+    let mut ticker = tokio::time::interval(Duration::from_millis(50));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    let mut last_sensor_time = std::time::Instant::now() - Duration::from_secs(5);
+    let mut last_effect_time = std::time::Instant::now() - Duration::from_secs(5);
+    let mut last_draw_time = std::time::Instant::now() - Duration::from_secs(5);
 
     // Initial draw
     terminal.draw(|f| ui::render_ui(f, &app))?;
@@ -116,9 +120,11 @@ async fn app_loop<B: backend::Backend>(
                     Some(Ok(Event::Key(key))) => {
                         handler::handle_key_event(&mut app, key).await;
                         terminal.draw(|f| ui::render_ui(f, &app))?;
+                        last_draw_time = std::time::Instant::now();
                     }
                     Some(Ok(Event::Resize(_, _))) => {
                         terminal.draw(|f| ui::render_ui(f, &app))?;
+                        last_draw_time = std::time::Instant::now();
                     }
                     Some(Err(_)) => break,
                     None => break,
@@ -126,20 +132,45 @@ async fn app_loop<B: backend::Backend>(
                 }
             }
             _ = ticker.tick() => {
+                let now = std::time::Instant::now();
                 let had_expired = app.clear_expired_messages();
                 let is_telemetry_tab = matches!(app.current_tab, ActiveTab::Dashboard | ActiveTab::FanCurves);
                 let needs_sensors = is_telemetry_tab
                     || app.active_software_effect != SoftwareEffect::None
                     || app.is_logging_metrics;
-                if needs_sensors {
+
+                let mut did_refresh_sensors = false;
+                if needs_sensors && now.duration_since(last_sensor_time) >= Duration::from_millis(1000) {
                     app.refresh_sensors().await;
+                    last_sensor_time = now;
+                    did_refresh_sensors = true;
+                    if app.is_logging_metrics {
+                        app.log_metrics_sample();
+                    }
                 }
-                app.apply_software_effect().await;
-                if app.is_logging_metrics {
-                    app.log_metrics_sample();
+
+                let effect_interval = match app.active_software_effect {
+                    SoftwareEffect::VoicePulse | SoftwareEffect::AudioPulse | SoftwareEffect::AudioWave => Duration::from_millis(50),
+                    SoftwareEffect::RainbowWave | SoftwareEffect::ColorCycle | SoftwareEffect::FireFlicker | SoftwareEffect::Clouds | SoftwareEffect::ThemeSync | SoftwareEffect::Strobe => Duration::from_millis(70),
+                    SoftwareEffect::AmbientLight => Duration::from_millis(100),
+                    SoftwareEffect::Heatmap | SoftwareEffect::GpuMode | SoftwareEffect::BatteryStatus | SoftwareEffect::CpuLoad => Duration::from_millis(1000),
+                    SoftwareEffect::None => Duration::from_millis(1000),
+                };
+
+                let mut did_apply_effect = false;
+                if app.active_software_effect != SoftwareEffect::None && now.duration_since(last_effect_time) >= effect_interval {
+                    app.apply_software_effect().await;
+                    last_effect_time = now;
+                    did_apply_effect = true;
                 }
-                if needs_sensors || had_expired {
+
+                let should_redraw = did_refresh_sensors
+                    || had_expired
+                    || (did_apply_effect && matches!(app.current_tab, ActiveTab::Aura) && now.duration_since(last_draw_time) >= Duration::from_millis(70));
+
+                if should_redraw {
                     terminal.draw(|f| ui::render_ui(f, &app))?;
+                    last_draw_time = now;
                 }
             }
         }

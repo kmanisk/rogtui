@@ -512,19 +512,31 @@ async fn test_unified_aura_mode_and_preset_cycling() {
     app.current_tab = ActiveTab::Aura;
     app.aura_brightness = 2; // Medium
 
-    // 1. Test Field 1: Mode cycling across all 16 modes
+    // 1. Test Field 1: Mode cycling across all 18 modes
     app.aura_selected_field = 1;
     let initial_idx = rogtui::ui::aura::get_current_mode_index(&app);
     assert_eq!(initial_idx, 0, "Initial mode should be 0 (Static)");
 
-    // Cycle right 8 times -> should land on Voice Pulse (mode 8)
-    for _ in 0..8 {
+    // Cycle right 7 times -> should land on Clouds (mode 7)
+    for _ in 0..7 {
+        rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
+    }
+    assert_eq!(app.active_software_effect, SoftwareEffect::Clouds);
+    assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 7);
+
+    // Cycle right 1 time -> should land on ThemeSync (mode 8)
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
+    assert_eq!(app.active_software_effect, SoftwareEffect::ThemeSync);
+    assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 8);
+
+    // Cycle right 2 more times -> should land on Voice Pulse (mode 10)
+    for _ in 0..2 {
         rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
     }
     assert_eq!(app.active_software_effect, SoftwareEffect::VoicePulse);
-    assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 8);
+    assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 10);
 
-    // Cycle right 8 more times -> should complete 16-step full circle back to 0 (Static)
+    // Cycle right 8 more times -> should complete 18-step full circle back to 0 (Static)
     for _ in 0..8 {
         rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
     }
@@ -566,5 +578,30 @@ fn test_btop_gauge_rendering() {
     assert!(rendered_text.contains("45%"), "Gauge must contain value string");
     assert!(rendered_text.contains('■'), "Btop gauge must use segmented black square glyphs");
 }
+
+#[tokio::test]
+async fn test_clouds_and_dynamic_theme_sync() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+
+    // 1. Clouds effect color computation
+    let c1 = app.compute_clouds_color();
+    assert!(c1.b > 200, "Clouds effect should have high blue component for cyan/sky tones");
+    let c2 = app.compute_clouds_color();
+    assert!(c2.g > 150, "Clouds effect should have high green/cyan component");
+
+    // 2. Dynamic Theme sync
+    let (theme_name, theme_col) = rogtui::ui::theme::Theme::read_system_theme();
+    assert!(!theme_name.is_empty(), "Theme name should be read from system or default");
+    assert!(theme_col.r > 0 || theme_col.g > 0 || theme_col.b > 0);
+
+    let sync_col = app.compute_theme_sync_color();
+    assert!(sync_col.r > 0 || sync_col.g > 0 || sync_col.b > 0);
+
+    // 3. AudioCaptureService state transitions
+    assert_eq!(app.audio_service.get_mic_level(), 0);
+    assert_eq!(app.audio_service.get_audio_level(), 0);
+}
+
 
 

@@ -43,16 +43,24 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly interfa
 
 ### 3. Fan Curve Editor (Tab 3)
 - Per-fan interactive curve tuning (CPU and GPU fans) across all power profiles.
-- Braille-canvas graph rendering temperature (30 C to 105 C) versus fan PWM percentage (0% to 100%).
+- Sub-pixel resolution Braille graph rendering 141 interpolated points (0.5 C steps) with live crosshairs and operating point indicator.
 - 8 hardware control points per curve with monotonic non-decreasing safety validation.
 - Safety policy enforcement: Refuses curves that set fan speed below 30% at or above 80 C.
 - Factory BIOS reset (`r`) and one-key undo / revert to last-known-good curve (`u`).
 
 ### 4. Aura Keyboard Lighting (Tab 4)
 - Backlight brightness control (Off, Low, Medium, High).
-- Animation modes: Static, Breathe, Rainbow, Pulse.
-- Dual-color RGB configuration with hex code representation and individual channel adjustments.
-- Real-time terminal color swatch preview.
+- 18 Lighting Modes across 4 distinct operational categories:
+  - **Hardware Firmware:** Static, Breathe, Rainbow, Pulse (Zero host CPU overhead, executed in Embedded Controller).
+  - **Software Animations:** RainbowFlow, BreathingColor, FireFlicker, StarryNight, SpectrumCycle, Clouds.
+  - **Audio & Visual Synchronization:**
+    - `AmbientSync`: Ported G-Helper `ApplyAmbient` Wayland screen sync (`0,400 1920x770` geometry crop, 0.05 downscale, +0.3 HSV saturation boost, 0.65 exponential smoothing).
+    - `VoicePulse`: Real-time microphone reactive pulse with dynamic Automatic Gain Control (AGC), noise floor filter, and cubic easing.
+    - `AudioPulse`: Real-time system audio playback reactive pulse.
+    - `AudioWave`: Multi-harmonic audio frequency split lighting.
+    - `ThemeSync`: Dynamic synchronization with active system desktop color palette (`~/.local/state/theme/colors.sh`).
+  - **System Telemetry:** Real-time thermal and load reactive modes (CpuTemp, GpuTemp, BatteryLevel, CpuLoad).
+- Dual-color RGB configuration with hex code representation and interactive 24-bit RGB/HSV color picker modal (`c`).
 - Keyboard power state toggles: Boot, Awake, Sleep, and Shutdown.
 
 ### 5. GPU Mode Control (Tab 5)
@@ -154,6 +162,7 @@ rogtui --mock
 
 ## Documentation
 
+- [`docs/rogtui-hardware-control.md`](docs/rogtui-hardware-control.md): Comprehensive guide to rogtui architecture, 18 Aura modes, G-Helper screen & audio algorithms, fan curve controls, and power profiles.
 - [`docs/asusctl-architecture-and-effects.md`](docs/asusctl-architecture-and-effects.md): Complete ASUS hardware architecture, kernel WMI sysfs ABI, DBus endpoints, and performance overhead metrics.
 - [`docs/parity.md`](docs/parity.md): Full feature parity matrix comparing `rogtui` with ROG Control Center (`rog-control-center`).
 - [`docs/keyboard-probe.md`](docs/keyboard-probe.md): Hardware verification and interactive probe results for TUF keyboard LED modes.

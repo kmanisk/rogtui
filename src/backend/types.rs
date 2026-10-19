@@ -11,6 +11,8 @@ pub enum SoftwareEffect {
     RainbowWave,
     ColorCycle,
     FireFlicker,
+    Clouds,
+    ThemeSync,
     Strobe,
     // Audio & Visual Effects
     VoicePulse,
@@ -30,6 +32,8 @@ impl SoftwareEffect {
             SoftwareEffect::RainbowWave,
             SoftwareEffect::ColorCycle,
             SoftwareEffect::FireFlicker,
+            SoftwareEffect::Clouds,
+            SoftwareEffect::ThemeSync,
             SoftwareEffect::Strobe,
             SoftwareEffect::VoicePulse,
             SoftwareEffect::AudioPulse,
@@ -48,6 +52,8 @@ impl SoftwareEffect {
             SoftwareEffect::RainbowWave
                 | SoftwareEffect::ColorCycle
                 | SoftwareEffect::FireFlicker
+                | SoftwareEffect::Clouds
+                | SoftwareEffect::ThemeSync
                 | SoftwareEffect::Strobe
                 | SoftwareEffect::VoicePulse
                 | SoftwareEffect::AudioPulse
@@ -56,12 +62,18 @@ impl SoftwareEffect {
         )
     }
 
+    pub fn is_fast_effect(self) -> bool {
+        self.is_animated()
+    }
+
     pub fn category(self) -> &'static str {
         match self {
             SoftwareEffect::None => "None",
             SoftwareEffect::RainbowWave
             | SoftwareEffect::ColorCycle
             | SoftwareEffect::FireFlicker
+            | SoftwareEffect::Clouds
+            | SoftwareEffect::ThemeSync
             | SoftwareEffect::Strobe => "Custom Animation",
             SoftwareEffect::VoicePulse
             | SoftwareEffect::AudioPulse
@@ -80,6 +92,8 @@ impl SoftwareEffect {
             SoftwareEffect::RainbowWave => "Rainbow Wave",
             SoftwareEffect::ColorCycle => "Color Cycle",
             SoftwareEffect::FireFlicker => "Fire Flicker",
+            SoftwareEffect::Clouds => "Clouds (Cyan & Sky Blue)",
+            SoftwareEffect::ThemeSync => "Theme Sync (System Desktop)",
             SoftwareEffect::Strobe => "Strobe / Flash",
             SoftwareEffect::VoicePulse => "Voice Pulse (Mic)",
             SoftwareEffect::AudioPulse => "Audio Pulse",
@@ -105,6 +119,14 @@ impl SoftwareEffect {
             }
             SoftwareEffect::FireFlicker => {
                 "Simulates warm fireplace embers with shifting amber, orange, and red tones."
+            }
+            SoftwareEffect::Clouds => {
+                "Smooth, calm harmonic atmospheric drift between soft cyan (#00E5FF),\n\
+                 sky blue (#4FC3F7), and misty cloud white (#E0F7FA)."
+            }
+            SoftwareEffect::ThemeSync => {
+                "Dynamically synchronizes keyboard illumination with the active desktop\n\
+                 theme from colors.sh with a subtle breathing pulsation."
             }
             SoftwareEffect::Strobe => {
                 "High-contrast blinking pulse between Primary Color and black."
@@ -135,12 +157,12 @@ impl SoftwareEffect {
                  Green = Integrated, Yellow = Hybrid, Orange = AsusMuxDgpu."
             }
             SoftwareEffect::BatteryStatus => {
-                "Reflects battery charge state:\n\
-                 Green = charging, Yellow = discharging, Red = low (<20%)."
+                "Keyboard lighting color tracks battery status and charge percentage:\n\
+                 Red (<20%), Yellow (20-50%), Green (50-100%), Cyan (AC charging)."
             }
             SoftwareEffect::CpuLoad => {
-                "Reflects real-time processor workload:\n\
-                 Green (<30%) -> Yellow (30-65%) -> Orange (65-85%) -> Red (>85%)."
+                "Keyboard lighting dynamically reflects real-time CPU utilization:\n\
+                 Green (idle <30%), Yellow (moderate 30-65%), Red (heavy >85%)."
             }
         }
     }

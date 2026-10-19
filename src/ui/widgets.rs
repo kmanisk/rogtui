@@ -25,6 +25,7 @@ pub fn panel_block<'a>(title: impl Into<Span<'a>>, focused: bool, theme: &Theme)
 
 pub fn render_header<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
     let mut left_spans = vec![
+        Span::raw(" "),
         Span::styled(
             " ROGTUI ",
             Style::default()
@@ -32,14 +33,36 @@ pub fn render_header<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
                 .fg(theme.sel_fg)
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::raw(" "),
+        Span::styled(
+            "v0.1.0 (asusd v6.5.0 + supergfxd v5.2.7)",
+            Style::default().fg(theme.dim),
+        ),
     ];
 
-    if app.is_logging_metrics {
-        left_spans.push(Span::raw(" "));
-        left_spans.push(Span::styled(
-            format!("[● REC: {} samples]", app.metrics_logged_count),
-            Style::default().fg(theme.err).add_modifier(Modifier::BOLD),
-        ));
+    let prof_name = app.platform_profile.as_str();
+    let prof_col = theme.profile_color(app.platform_profile);
+    let bat_str = if let Some(b) = app.sensors.battery_charge_percent {
+        format!("[BAT: {b}%]")
+    } else {
+        "[AC Power]".to_string()
+    };
+
+    let right_spans = vec![
+        Span::styled(format!("[Profile: {prof_name}]"), Style::default().fg(prof_col).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(bat_str, Style::default().fg(theme.ok)),
+        Span::raw(" "),
+    ];
+
+    let left_len: usize = left_spans.iter().map(|s| s.content.len()).sum();
+    let right_len: usize = right_spans.iter().map(|s| s.content.len()).sum();
+    let total_width = area.width as usize;
+
+    if total_width > left_len + right_len {
+        let padding = total_width - left_len - right_len;
+        left_spans.push(Span::raw(" ".repeat(padding)));
+        left_spans.extend(right_spans);
     }
 
     f.render_widget(Paragraph::new(Line::from(left_spans)), area);
@@ -56,20 +79,24 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, active_tab: ActiveTab, theme: &
         (ActiveTab::About, "7 About"),
     ];
 
-    let mut spans = Vec::new();
-    for (i, (tab, name)) in tabs.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" | ", Style::default().fg(theme.dim)));
-        }
+    let mut spans = vec![Span::raw(" ")];
+    for (tab, name) in tabs.iter() {
         let is_active = *tab == active_tab;
-        let style = if is_active {
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        if is_active {
+            spans.push(Span::styled(
+                format!(" [ {name} ] "),
+                Style::default()
+                    .bg(theme.accent)
+                    .fg(theme.sel_fg)
+                    .add_modifier(Modifier::BOLD),
+            ));
         } else {
-            Style::default().fg(theme.dim)
-        };
-        spans.push(Span::styled(*name, style));
+            spans.push(Span::styled(
+                format!("   {name}   "),
+                Style::default().fg(theme.dim),
+            ));
+        }
+        spans.push(Span::raw(" "));
     }
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -78,108 +105,106 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, active_tab: ActiveTab, theme: &
 pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
     let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
         vec![
-            ("j/k", "slider"),
-            ("h/l", "adjust"),
-            ("enter", "apply"),
-            ("esc", "cancel"),
+            ("j/k", "Select Slider"),
+            ("h/l", "Adjust Color"),
+            ("Enter", "Apply"),
+            ("Esc", "Cancel"),
         ]
     } else if app.show_advanced_power_modal {
         vec![
-            ("esc/enter", "close"),
+            ("Esc/Enter", "Close Modal"),
         ]
     } else {
         match app.current_tab {
             ActiveTab::Dashboard => vec![
-                ("tab", "switch"),
-                ("p", "profile"),
-                ("l", if app.is_logging_metrics { "stop log" } else { "log metrics" }),
-                ("a", "limits"),
-                ("o", "overdrive"),
-                ("b", "auto-bright"),
-                ("?", "help"),
-                ("q", "quit"),
+                ("Tab", "Next Tab"),
+                ("p", "Cycle Profile"),
+                ("a", "Power Limits"),
+                ("o", "Overdrive"),
+                ("b", "Auto Bright"),
+                ("?", "Help"),
+                ("q", "Quit"),
             ],
             ActiveTab::Power => vec![
-                ("j/k", "select"),
-                ("h/l", "adjust"),
-                ("enter", "toggle"),
-                ("?", "help"),
-                ("q", "quit"),
+                ("j/k", "Select Field"),
+                ("h/l", "Adjust / Limit"),
+                ("Enter", "Toggle"),
+                ("?", "Help"),
+                ("q", "Quit"),
             ],
             ActiveTab::FanCurves => vec![
-                ("h/l", "pt"),
-                ("j/k", "%"),
-                ("H/L", "C"),
-                ("w", "apply"),
-                ("x", "repair"),
-                ("s", "preset"),
-                ("f", "fan"),
-                ("?", "help"),
-                ("q", "quit"),
+                ("h/l", "Select Pt"),
+                ("j/k", "Speed (+/-1%)"),
+                ("H/L", "Temp (+/-1°C)"),
+                ("s", "Preset"),
+                ("x", "Auto Repair"),
+                ("w", "Apply to EC"),
+                ("?", "Help"),
+                ("q", "Quit"),
             ],
             ActiveTab::Aura => {
                 if app.aura_brightness == 0 {
                     vec![
-                        ("h/l", "brightness (Off)"),
-                        ("j/k", "select"),
-                        ("w", "save to hw"),
-                        ("?", "help"),
-                        ("q", "quit"),
+                        ("h/l", "Turn On Backlight"),
+                        ("j/k", "Select Field"),
+                        ("w", "Save to BIOS"),
+                        ("?", "Help"),
+                        ("q", "Quit"),
                     ]
                 } else {
                     vec![
-                        ("j/k", "select"),
-                        ("h/l", "adjust"),
-                        ("c/enter", "picker"),
-                        ("w", "save to hw"),
-                        ("?", "help"),
-                        ("q", "quit"),
+                        ("j/k", "Select Field"),
+                        ("h/l", "Cycle Mode / Preset"),
+                        ("c/Enter", "Color Picker"),
+                        ("w", "Save to BIOS"),
+                        ("?", "Help"),
+                        ("q", "Quit"),
                     ]
                 }
             }
-        ActiveTab::Gpu => vec![
-            ("j/k", "select mode"),
-            ("enter", "switch"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
-        ActiveTab::Armoury => vec![
-            ("j/k", "select"),
-            ("h/l", "adjust"),
-            ("enter", "toggle"),
-            ("u", "unavail"),
-            ("r", "reset"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
-        ActiveTab::About => vec![
-            ("tab", "switch"),
-            ("y", "export report"),
-            ("?", "help"),
-            ("q", "quit"),
-        ],
+            ActiveTab::Gpu => vec![
+                ("j/k", "Select Mode"),
+                ("Enter", "Switch GPU Mode"),
+                ("?", "Help"),
+                ("q", "Quit"),
+            ],
+            ActiveTab::Armoury => vec![
+                ("j/k", "Select Attr"),
+                ("h/l", "Adjust Value"),
+                ("Enter", "Toggle"),
+                ("u", "Toggle Unavail"),
+                ("r", "Restore Default"),
+                ("?", "Help"),
+                ("q", "Quit"),
+            ],
+            ActiveTab::About => vec![
+                ("Tab", "Next Tab"),
+                ("y", "Export Report"),
+                ("?", "Help"),
+                ("q", "Quit"),
+            ],
         }
     };
 
-    let mut spans = Vec::new();
-    for (i, (key, desc)) in keybinds.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" | ", Style::default().fg(theme.dim)));
-        }
-        spans.push(Span::styled(*key, Style::default().fg(theme.dim)));
+    let mut spans = vec![Span::raw(" ")];
+    for (key, desc) in keybinds.iter() {
+        spans.push(Span::styled(
+            format!("[{key}]"),
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+        ));
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(*desc, Style::default().fg(theme.fg)));
+        spans.push(Span::styled(format!("{desc}  "), Style::default().fg(theme.fg)));
     }
 
     // Status / Toast right-aligned
     let status_span = if let Some((msg, is_error, _)) = &app.status_message {
         if *is_error {
-            Span::styled(format!("err  {msg}"), Style::default().fg(theme.err).add_modifier(Modifier::BOLD))
+            Span::styled(format!(" [err] {msg} "), Style::default().bg(theme.err).fg(Color::White).add_modifier(Modifier::BOLD))
         } else {
-            Span::styled(format!("ok  {msg}"), Style::default().fg(theme.ok))
+            Span::styled(format!(" [ok] {msg} "), Style::default().bg(theme.ok).fg(Color::Black).add_modifier(Modifier::BOLD))
         }
     } else if let Some((hint, _)) = &app.fan_clamp_hint {
-        Span::styled(format!("hint: {hint}"), Style::default().fg(theme.warn))
+        Span::styled(format!(" [hint: {hint}] "), Style::default().bg(theme.warn).fg(Color::Black))
     } else {
         Span::raw("")
     };

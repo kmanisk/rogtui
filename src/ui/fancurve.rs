@@ -1,6 +1,6 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     symbols::Marker,
     text::{Line, Span},
     widgets::{Axis, Chart, Dataset, GraphType, Paragraph},
@@ -132,10 +132,10 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
         };
         let live_speed = curve.interpolate(live_temp);
 
-        // Interpolated line coordinates for active curve (smooth Braille line)
+        // High-resolution interpolated line coordinates for active curve (smooth Braille line)
         let mut curve_data: Vec<(f64, f64)> = Vec::with_capacity(141);
-        for t in 30..=100 {
-            let temp = t as f64;
+        for t in (300..=1000).step_by(5) {
+            let temp = t as f64 / 10.0;
             curve_data.push((temp, curve.interpolate(temp)));
         }
 
@@ -143,8 +143,8 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
         let mut applied_data: Vec<(f64, f64)> = Vec::new();
         if is_modified {
             if let Some(appl) = applied_curve {
-                for t in 30..=100 {
-                    let temp = t as f64;
+                for t in (300..=1000).step_by(5) {
+                    let temp = t as f64 / 10.0;
                     applied_data.push((temp, appl.interpolate(temp)));
                 }
             }
@@ -153,8 +153,8 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
         // Other fan overlay
         let mut other_data: Vec<(f64, f64)> = Vec::new();
         if let Some(other) = other_curve {
-            for t in 30..=100 {
-                let temp = t as f64;
+            for t in (300..=1000).step_by(5) {
+                let temp = t as f64 / 10.0;
                 other_data.push((temp, other.interpolate(temp)));
             }
         }
@@ -173,8 +173,9 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
             .map(|p| vec![(p.temp as f64, p.pwm_percent as f64)])
             .unwrap_or_default();
 
-        // Live vertical indicator line
-        let live_v_line: Vec<(f64, f64)> = vec![(live_temp, 0.0), (live_temp, live_speed)];
+        // Live vertical indicator line & crosshair
+        let live_v_line: Vec<(f64, f64)> = vec![(live_temp, 0.0), (live_temp, 100.0)];
+        let live_h_line: Vec<(f64, f64)> = vec![(30.0, live_speed), (live_temp, live_speed)];
         let live_pt: Vec<(f64, f64)> = vec![(live_temp, live_speed)];
 
         let mut datasets = Vec::new();
@@ -196,7 +197,7 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
                 Dataset::default()
                     .marker(Marker::Braille)
                     .graph_type(GraphType::Line)
-                    .style(Style::default().fg(theme.dim))
+                    .style(Style::default().fg(Color::Rgb(110, 120, 135)))
                     .data(&applied_data),
             );
         }
@@ -206,18 +207,44 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
             Dataset::default()
                 .marker(Marker::Braille)
                 .graph_type(GraphType::Line)
-                .style(Style::default().fg(theme.accent))
+                .style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
                 .data(&curve_data),
         );
 
         // Control points
         datasets.push(
             Dataset::default()
-                .marker(Marker::Dot)
+                .marker(Marker::Braille)
                 .graph_type(GraphType::Scatter)
-                .style(Style::default().fg(theme.fg))
+                .style(Style::default().fg(Color::White))
                 .data(&point_coords),
         );
+
+        // Live crosshair lines
+        if (30.0..=100.0).contains(&live_temp) {
+            datasets.push(
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(Color::Rgb(85, 95, 110)))
+                    .data(&live_v_line),
+            );
+            datasets.push(
+                Dataset::default()
+                    .marker(Marker::Braille)
+                    .graph_type(GraphType::Line)
+                    .style(Style::default().fg(Color::Rgb(85, 95, 110)))
+                    .data(&live_h_line),
+            );
+            // Live operating point
+            datasets.push(
+                Dataset::default()
+                    .marker(Marker::Block)
+                    .graph_type(GraphType::Scatter)
+                    .style(Style::default().fg(theme.ok))
+                    .data(&live_pt),
+            );
+        }
 
         // Selected point
         datasets.push(
@@ -228,25 +255,11 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
                 .data(&selected_coord),
         );
 
-        // Live operating point indicator
-        if (30.0..=100.0).contains(&live_temp) {
-            datasets.push(
-                Dataset::default()
-                    .marker(Marker::Braille)
-                    .graph_type(GraphType::Line)
-                    .style(Style::default().fg(theme.dim))
-                    .data(&live_v_line),
-            );
-            datasets.push(
-                Dataset::default()
-                    .marker(Marker::Dot)
-                    .graph_type(GraphType::Scatter)
-                    .style(Style::default().fg(theme.ok))
-                    .data(&live_pt),
-            );
-        }
-
-        let chart_block = panel_block(format!(" {} Fan Curve ", fan_name), true, theme);
+        let chart_title = format!(
+            " {} Fan Curve [Braille Hi-Res · Live: {:.0}°C / {:.0}% ({} RPM)] ",
+            fan_name, live_temp, live_speed, live_rpm
+        );
+        let chart_block = panel_block(chart_title, true, theme);
 
         let chart = Chart::new(datasets)
             .block(chart_block)
@@ -255,14 +268,14 @@ pub fn render_fancurve<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect)
                     .title("Temp (°C)")
                     .style(Style::default().fg(theme.dim))
                     .bounds([30.0, 100.0])
-                    .labels(["30", "40", "50", "60", "70", "80", "90", "100"]),
+                    .labels(["30°C", "40°C", "50°C", "60°C", "70°C", "80°C", "90°C", "100°C"]),
             )
             .y_axis(
                 Axis::default()
                     .title("Speed (%)")
                     .style(Style::default().fg(theme.dim))
                     .bounds([0.0, 100.0])
-                    .labels(["0%", "25%", "50%", "75%", "100%"]),
+                    .labels(["0%", "20%", "40%", "60%", "80%", "100%"]),
             );
 
         f.render_widget(chart, body_chunks[0]);

@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Clear, Paragraph, Sparkline},
+    widgets::{Clear, Paragraph},
     Frame,
 };
 
@@ -95,12 +95,10 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
             Constraint::Length(1), // CPU Model & Freq
             Constraint::Length(1), // CPU Usage
             Constraint::Length(1), // CPU Temp
-            Constraint::Length(1), // CPU History Sparkline
             Constraint::Length(1), // CPU Fan RPM
             Constraint::Length(1), // RAM Usage
             Constraint::Length(1), // dGPU status / model
             Constraint::Length(1), // GPU Temp
-            Constraint::Length(1), // GPU History Sparkline
             Constraint::Length(1), // GPU Fan RPM
             Constraint::Min(0),
         ])
@@ -129,36 +127,19 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         hw_rows[2],
     );
 
-    // Row 3: CPU Sparkline
-    let cpu_history: Vec<u64> = app.cpu_temp_history.iter().copied().collect();
-    let spark_cpu_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(18), Constraint::Min(8)])
-        .split(hw_rows[3]);
-    f.render_widget(
-        Paragraph::new(Span::styled("  History (60s) : ", Style::default().fg(theme.dim))),
-        spark_cpu_chunks[0],
-    );
-    if !cpu_history.is_empty() {
-        f.render_widget(
-            Sparkline::default().data(&cpu_history).max(100).style(Style::default().fg(cpu_color)),
-            spark_cpu_chunks[1],
-        );
-    }
-
-    // Row 4: CPU Fan
+    // Row 3: CPU Fan
     f.render_widget(
         Paragraph::new(render_gauge("CPU Fan", &cpu_rpm_val, cpu_rpm_pct, bar_width, theme.fg, theme)),
+        hw_rows[3],
+    );
+
+    // Row 4: RAM
+    f.render_widget(
+        Paragraph::new(render_gauge("Memory (RAM)", &ram_str, ram_pct as u32, bar_width, theme.ok, theme)),
         hw_rows[4],
     );
 
-    // Row 5: RAM
-    f.render_widget(
-        Paragraph::new(render_gauge("Memory (RAM)", &ram_str, ram_pct as u32, bar_width, theme.ok, theme)),
-        hw_rows[5],
-    );
-
-    // Row 6: dGPU status
+    // Row 5: dGPU status
     f.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("  dGPU (RTX 5050): ", Style::default().fg(theme.dim)),
@@ -171,36 +152,19 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
                 },
             ),
         ])),
+        hw_rows[5],
+    );
+
+    // Row 6: GPU Temp
+    f.render_widget(
+        Paragraph::new(render_gauge("GPU Temp", &gpu_temp_val, gpu_temp, bar_width, gpu_color, theme)),
         hw_rows[6],
     );
 
-    // Row 7: GPU Temp
-    f.render_widget(
-        Paragraph::new(render_gauge("GPU Temp", &gpu_temp_val, gpu_temp, bar_width, gpu_color, theme)),
-        hw_rows[7],
-    );
-
-    // Row 8: GPU Sparkline
-    let gpu_history: Vec<u64> = app.gpu_temp_history.iter().copied().collect();
-    let spark_gpu_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(18), Constraint::Min(8)])
-        .split(hw_rows[8]);
-    f.render_widget(
-        Paragraph::new(Span::styled("  History (60s) : ", Style::default().fg(theme.dim))),
-        spark_gpu_chunks[0],
-    );
-    if !gpu_history.is_empty() {
-        f.render_widget(
-            Sparkline::default().data(&gpu_history).max(100).style(Style::default().fg(gpu_color)),
-            spark_gpu_chunks[1],
-        );
-    }
-
-    // Row 9: GPU Fan
+    // Row 7: GPU Fan
     f.render_widget(
         Paragraph::new(render_gauge("GPU Fan", &gpu_rpm_val, gpu_rpm_pct, bar_width, theme.fg, theme)),
-        hw_rows[9],
+        hw_rows[7],
     );
 
     // -------------------------------------------------------------------------
@@ -249,18 +213,7 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
             Span::styled("[p: cycle]", Style::default().fg(theme.dim)),
         ]),
         Line::from(vec![
-            Span::styled("  Telemetry Log [l] : ", Style::default().fg(theme.dim)),
-            if app.is_logging_metrics {
-                Span::styled(
-                    format!("[● RECORDING ({} samples)]", app.metrics_logged_count),
-                    Style::default().fg(theme.err).add_modifier(Modifier::BOLD),
-                )
-            } else {
-                Span::styled("[ Inactive ]  (Press 'l' to record to CSV)", Style::default().fg(theme.dim))
-            },
-        ]),
-        Line::from(vec![
-            Span::styled("  Advanced Tuning : ", Style::default().fg(theme.dim)),
+            Span::styled("  Advanced Tuning   : ", Style::default().fg(theme.dim)),
             Span::styled("[Press 'a' for Power Limits Modal]", Style::default().fg(theme.accent)),
         ]),
         Line::from(vec![

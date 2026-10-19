@@ -816,7 +816,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         }
         1 => {
             let current_idx = crate::ui::aura::get_current_mode_index(app) as i32;
-            let next_idx = ((current_idx + dir + 16) % 16) as usize;
+            let next_idx = ((current_idx + dir + 18) % 18) as usize;
             match next_idx {
                 0 => {
                     app.active_software_effect = SoftwareEffect::None;
@@ -857,15 +857,17 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 4 => activate_software_mode(app, SoftwareEffect::RainbowWave, "Rainbow Wave active (360° spectrum sweep)").await,
                 5 => activate_software_mode(app, SoftwareEffect::ColorCycle, "Color Cycle active (7 primary colors)").await,
                 6 => activate_software_mode(app, SoftwareEffect::FireFlicker, "Fire Flicker active (fireplace embers)").await,
-                7 => activate_software_mode(app, SoftwareEffect::Strobe, "Strobe / Flash active (pulsing pulse)").await,
-                8 => activate_software_mode(app, SoftwareEffect::VoicePulse, "Voice Pulse active (speech reactive via clean mic)").await,
-                9 => activate_software_mode(app, SoftwareEffect::AudioPulse, "Audio Pulse active (speaker output reactive)").await,
-                10 => activate_software_mode(app, SoftwareEffect::AudioWave, "Audio Wave active (frequency spectrum EQ)").await,
-                11 => activate_software_mode(app, SoftwareEffect::AmbientLight, "Ambient Light active (Wayland screen sync)").await,
-                12 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
-                13 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
-                14 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
-                15 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
+                7 => activate_software_mode(app, SoftwareEffect::Clouds, "Clouds active (calm cyan & sky blue drift)").await,
+                8 => activate_software_mode(app, SoftwareEffect::ThemeSync, "Theme Sync active (desktop palette sync)").await,
+                9 => activate_software_mode(app, SoftwareEffect::Strobe, "Strobe / Flash active (pulsing pulse)").await,
+                10 => activate_software_mode(app, SoftwareEffect::VoicePulse, "Voice Pulse active (speech reactive via clean mic)").await,
+                11 => activate_software_mode(app, SoftwareEffect::AudioPulse, "Audio Pulse active (speaker output reactive)").await,
+                12 => activate_software_mode(app, SoftwareEffect::AudioWave, "Audio Wave active (frequency spectrum EQ)").await,
+                13 => activate_software_mode(app, SoftwareEffect::AmbientLight, "Ambient Light active (Wayland screen sync)").await,
+                14 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
+                15 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
+                16 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
+                17 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
                 _ => {}
             }
         }

@@ -1,4 +1,7 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Instant;
 
 use crate::backend::types::{
@@ -82,6 +85,305 @@ pub enum ConfirmAction {
     SaveAuraFirmware,
 }
 
+pub struct AudioCaptureService {
+    running: Arc<AtomicBool>,
+    mic_level: Arc<AtomicU8>,
+    audio_level: Arc<AtomicU8>,
+    thread_handle: Option<JoinHandle<()>>,
+    current_source: Option<String>,
+}
+
+impl Default for AudioCaptureService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AudioCaptureService {
+    pub fn new() -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            mic_level: Arc::new(AtomicU8::new(0)),
+            audio_level: Arc::new(AtomicU8::new(0)),
+            thread_handle: None,
+            current_source: None,
+        }
+    }
+
+    pub fn start(&mut self, source: &str) {
+        if self.current_source.as_deref() == Some(source) && self.running.load(Ordering::Relaxed) {
+            return;
+        }
+        self.stop();
+
+        self.running.store(true, Ordering::Relaxed);
+        let running_clone = self.running.clone();
+        let is_mic = source.contains("SOURCE");
+        let output_atomic = if is_mic {
+            self.mic_level.clone()
+        } else {
+            self.audio_level.clone()
+        };
+        let src_str = source.to_string();
+
+        let handle = std::thread::spawn(move || {
+            let mut child = match std::process::Command::new("parec")
+                .args([
+                    "--raw",
+                    "--latency-msec=25",
+                    "--channels=1",
+                    "--rate=8000",
+                    "--format=s16le",
+                    "-d",
+                    &src_str,
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(c) => c,
+                Err(_) => return,
+            };
+
+            let mut stdout = match child.stdout.take() {
+                Some(s) => s,
+                None => {
+                    let _ = child.kill();
+                    return;
+                }
+            };
+
+            use std::io::Read;
+            let mut buf = [0u8; 400]; // 200 samples (25ms)
+            let mut rolling_peak: f32 = 800.0;
+            let mut decay_brightness: f32 = 0.0;
+
+            while running_clone.load(Ordering::Relaxed) {
+                let mut read_bytes = 0;
+                while read_bytes < buf.len() && running_clone.load(Ordering::Relaxed) {
+                    match stdout.read(&mut buf[read_bytes..]) {
+                        Ok(0) => break,
+                        Ok(n) => read_bytes += n,
+                        Err(_) => break,
+                    }
+                }
+                if read_bytes < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    continue;
+                }
+
+                let num_samples = read_bytes / 2;
+                let mut max_amp: u32 = 0;
+                for i in 0..num_samples {
+                    let sample = i16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]]);
+                    let amp = sample.unsigned_abs() as u32;
+                    if amp > max_amp {
+                        max_amp = amp;
+                    }
+                }
+
+                // Automatic Gain Control (AGC) - community formula adapted from G-Helper
+                rolling_peak = (rolling_peak * 0.96).max(max_amp as f32).max(if is_mic { 300.0 } else { 800.0 });
+                let noise_floor = if is_mic { 80.0 } else { 150.0 };
+                let current_f = max_amp as f32;
+
+                let raw_ratio = if current_f <= noise_floor {
+                    0.0
+                } else {
+                    ((current_f - noise_floor) / (rolling_peak - noise_floor)).clamp(0.0, 1.0)
+                };
+
+                // Exponential decay (G-Helper: envBrightness = Math.Max(envBrightness * audioDecay, max))
+                decay_brightness = (decay_brightness * 0.72).max(raw_ratio);
+
+                // G-Helper cubic easing curve
+                let curved = decay_brightness * decay_brightness * decay_brightness;
+                let level = (curved * 100.0).round().clamp(0.0, 100.0) as u8;
+
+                output_atomic.store(level, Ordering::Relaxed);
+            }
+
+            let _ = child.kill();
+            let _ = child.wait();
+        });
+
+        self.thread_handle = Some(handle);
+        self.current_source = Some(source.to_string());
+    }
+
+    pub fn stop(&mut self) {
+        if self.running.load(Ordering::Relaxed) {
+            self.running.store(false, Ordering::Relaxed);
+            if let Some(h) = self.thread_handle.take() {
+                let _ = h.join();
+            }
+        }
+        self.current_source = None;
+        self.mic_level.store(0, Ordering::Relaxed);
+        self.audio_level.store(0, Ordering::Relaxed);
+    }
+
+    pub fn get_mic_level(&self) -> u8 {
+        self.mic_level.load(Ordering::Relaxed)
+    }
+
+    pub fn get_audio_level(&self) -> u8 {
+        self.audio_level.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for AudioCaptureService {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+pub struct AmbientCaptureService {
+    running: Arc<AtomicBool>,
+    latest_color: Arc<Mutex<Option<RgbColor>>>,
+    thread_handle: Option<JoinHandle<()>>,
+}
+
+impl Default for AmbientCaptureService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AmbientCaptureService {
+    pub fn new() -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            latest_color: Arc::new(Mutex::new(None)),
+            thread_handle: None,
+        }
+    }
+
+    pub fn start(&mut self) {
+        if self.running.load(Ordering::Relaxed) {
+            return;
+        }
+        self.running.store(true, Ordering::Relaxed);
+        let running_clone = self.running.clone();
+        let color_arc = self.latest_color.clone();
+
+        let handle = std::thread::spawn(move || {
+            let mut smoothed: Option<RgbColor> = None;
+
+            while running_clone.load(Ordering::Relaxed) {
+                // G-Helper bounds: crop top 1/3 and bottom panel
+                // grim -g "0,400 1920x770" -s 0.05 -t ppm -
+                let output = std::process::Command::new("grim")
+                    .args(["-g", "0,400 1920x770", "-s", "0.05", "-t", "ppm", "-"])
+                    .output();
+
+                if let Ok(out) = output {
+                    if out.status.success() && out.stdout.len() >= 15 {
+                        if let Some(raw_avg) = parse_ppm_dominant(&out.stdout) {
+                            // G-Helper UpSaturation (+0.3)
+                            let saturated = up_saturation(raw_avg, 0.3);
+                            // G-Helper exponential smooth (0.65)
+                            let final_color = match smoothed {
+                                Some(prev) => {
+                                    let s = smooth_color(saturated, prev, 0.65);
+                                    smoothed = Some(s);
+                                    s
+                                }
+                                None => {
+                                    smoothed = Some(saturated);
+                                    saturated
+                                }
+                            };
+                            if let Ok(mut lock) = color_arc.lock() {
+                                *lock = Some(final_color);
+                            }
+                        }
+                    }
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+        });
+
+        self.thread_handle = Some(handle);
+    }
+
+    pub fn stop(&mut self) {
+        if self.running.load(Ordering::Relaxed) {
+            self.running.store(false, Ordering::Relaxed);
+            if let Some(h) = self.thread_handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+
+    pub fn get_color(&self) -> Option<RgbColor> {
+        self.latest_color.lock().ok().and_then(|c| *c)
+    }
+}
+
+impl Drop for AmbientCaptureService {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn parse_ppm_dominant(data: &[u8]) -> Option<RgbColor> {
+    if !data.starts_with(b"P6") {
+        return None;
+    }
+    let mut idx = 2;
+    let mut tokens = 0;
+    while idx < data.len() && tokens < 3 {
+        while idx < data.len() && data[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        while idx < data.len() && !data[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        tokens += 1;
+    }
+    if idx < data.len() && data[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    let pixel_data = &data[idx..];
+    let num_pixels = pixel_data.len() / 3;
+    if num_pixels == 0 {
+        return None;
+    }
+    let mut sum_r: u64 = 0;
+    let mut sum_g: u64 = 0;
+    let mut sum_b: u64 = 0;
+    let (chunks, _) = pixel_data.as_chunks::<3>();
+    for &[r, g, b] in chunks {
+        sum_r += r as u64;
+        sum_g += g as u64;
+        sum_b += b as u64;
+    }
+    let avg_r = (sum_r / num_pixels as u64) as u8;
+    let avg_g = (sum_g / num_pixels as u64) as u8;
+    let avg_b = (sum_b / num_pixels as u64) as u8;
+    Some(RgbColor::new(avg_r, avg_g, avg_b))
+}
+
+fn up_saturation(color: RgbColor, boost: f32) -> RgbColor {
+    if color.r == color.g && color.g == color.b {
+        return color;
+    }
+    let (h, s, v) = color.to_hsv();
+    let new_s = (s + boost * 100.0).clamp(0.0, 100.0);
+    RgbColor::from_hsv(h, new_s, v)
+}
+
+fn smooth_color(target: RgbColor, prev: RgbColor, smooth: f32) -> RgbColor {
+    let factor = smooth.clamp(0.0, 1.0);
+    let inv = 1.0 - factor;
+    let r = (target.r as f32 * inv + prev.r as f32 * factor).round() as u8;
+    let g = (target.g as f32 * inv + prev.g as f32 * factor).round() as u8;
+    let b = (target.b as f32 * inv + prev.b as f32 * factor).round() as u8;
+    RgbColor::new(r, g, b)
+}
+
 pub struct AppState<B: Backend> {
     pub backend: B,
     pub theme: Theme,
@@ -152,6 +454,10 @@ pub struct AppState<B: Backend> {
     pub mic_level: u8,
     pub audio_level: u8,
     pub last_ambient_color: Option<RgbColor>,
+    pub clouds_phase: f32,
+    pub theme_sync_phase: f32,
+    pub audio_service: AudioCaptureService,
+    pub ambient_service: AmbientCaptureService,
 
     // Armoury Attributes State
     pub armoury_attributes: Vec<ArmouryAttribute>,
@@ -285,6 +591,10 @@ impl<B: Backend> AppState<B> {
             mic_level: 0,
             audio_level: 0,
             last_ambient_color: None,
+            clouds_phase: 0.0,
+            theme_sync_phase: 0.0,
+            audio_service: AudioCaptureService::new(),
+            ambient_service: AmbientCaptureService::new(),
             armoury_attributes,
             armoury_selected_idx: 0,
             show_unavailable_armoury: false,
@@ -561,152 +871,63 @@ impl<B: Backend> AppState<B> {
         }
     }
 
-    /// Sample a 100ms slice of microphone input audio via parec from @DEFAULT_SOURCE@
-    /// (corresponds to clean ghelper-audio / built-in microphone).
-    pub fn sample_mic_level() -> u8 {
-        use std::io::Read;
-        let mut child = match std::process::Command::new("parec")
-            .args([
-                "--raw",
-                "--latency-msec=20",
-                "--process-time-msec=20",
-                "--channels=1",
-                "--rate=8000",
-                "--format=s16le",
-                "-d",
-                "@DEFAULT_SOURCE@",
-            ])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return 0,
-        };
+    /// Clouds: Smooth harmonic atmospheric drift between soft cyan (#00E5FF),
+    /// sky blue (#4FC3F7), and misty cloud white (#E0F7FA).
+    pub fn compute_clouds_color(&mut self) -> RgbColor {
+        self.clouds_phase = (self.clouds_phase + 0.05) % (2.0 * std::f32::consts::PI);
+        let wave1 = (self.clouds_phase.sin() + 1.0) * 0.5;
+        let wave2 = ((self.clouds_phase * 0.7).cos() + 1.0) * 0.5;
+        let blend = (wave1 * 0.6 + wave2 * 0.4).clamp(0.0, 1.0);
 
-        let mut buf = [0u8; 1600];
-        let mut bytes_read = 0;
-        if let Some(mut stdout) = child.stdout.take() {
-            while bytes_read < 1600 {
-                match stdout.read(&mut buf[bytes_read..]) {
-                    Ok(0) => break,
-                    Ok(n) => bytes_read += n,
-                    Err(_) => break,
-                }
-            }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-
-        if bytes_read < 2 {
-            return 0;
-        }
-
-        let num_samples = bytes_read / 2;
-        let mut max_amp: u32 = 0;
-        for i in 0..num_samples {
-            let sample = i16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]]);
-            let amp = sample.unsigned_abs() as u32;
-            if amp > max_amp {
-                max_amp = amp;
-            }
-        }
-
-        // Apply 16x digital pre-amp boost for laptop microphone sensitivity
-        ((max_amp * 100 * 16) / 32767).min(100) as u8
-    }
-
-    /// Sample a 100ms slice of audio playback output via parec from @DEFAULT_MONITOR@.
-    pub fn sample_audio_out_level() -> u8 {
-        use std::io::Read;
-        let mut child = match std::process::Command::new("parec")
-            .args([
-                "--raw",
-                "--latency-msec=20",
-                "--process-time-msec=20",
-                "--channels=1",
-                "--rate=8000",
-                "--format=s16le",
-                "-d",
-                "@DEFAULT_MONITOR@",
-            ])
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return 0,
-        };
-
-        let mut buf = [0u8; 1600];
-        let mut bytes_read = 0;
-        if let Some(mut stdout) = child.stdout.take() {
-            while bytes_read < 1600 {
-                match stdout.read(&mut buf[bytes_read..]) {
-                    Ok(0) => break,
-                    Ok(n) => bytes_read += n,
-                    Err(_) => break,
-                }
-            }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-
-        if bytes_read < 2 {
-            return 0;
-        }
-
-        let num_samples = bytes_read / 2;
-        let mut max_amp: u32 = 0;
-        for i in 0..num_samples {
-            let sample = i16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]]);
-            let amp = sample.unsigned_abs() as u32;
-            if amp > max_amp {
-                max_amp = amp;
-            }
-        }
-
-        // Apply 4x digital gain for speaker output VU
-        ((max_amp * 100 * 4) / 32767).min(100) as u8
-    }
-
-    /// Sample real-time center pixel of the active Wayland screen via grim.
-    pub fn sample_wayland_screen_color() -> Option<RgbColor> {
-        let output = std::process::Command::new("grim")
-            .args(["-g", "960,600 1x1", "-t", "ppm", "-"])
-            .output()
-            .ok()?;
-        if output.status.success() && output.stdout.len() >= 3 {
-            let len = output.stdout.len();
-            let r = output.stdout[len - 3];
-            let g = output.stdout[len - 2];
-            let b = output.stdout[len - 1];
-            Some(RgbColor::new(r, g, b))
+        if blend < 0.7 {
+            let t = blend / 0.7;
+            let r = (0.0 * (1.0 - t) + 79.0 * t) as u8;
+            let g = (229.0 * (1.0 - t) + 195.0 * t) as u8;
+            let b = (255.0 * (1.0 - t) + 247.0 * t) as u8;
+            RgbColor::new(r, g, b)
         } else {
-            None
+            let t = (blend - 0.7) / 0.3;
+            let r = (79.0 * (1.0 - t) + 224.0 * t) as u8;
+            let g = (195.0 * (1.0 - t) + 247.0 * t) as u8;
+            let b = (247.0 * (1.0 - t) + 250.0 * t) as u8;
+            RgbColor::new(r, g, b)
         }
     }
 
-    /// Voice Pulse: Speech reactive using clean microphone (ghelper-audio).
-    /// G-Helper style mic sync: lights up brightly when speaking, rests when silent.
+    /// Theme Sync: Dynamically synchronizes keyboard lighting to the active desktop theme
+    /// from ~/.local/state/theme/colors.sh with a subtle breathing pulsation.
+    pub fn compute_theme_sync_color(&mut self) -> RgbColor {
+        let (_, base_col) = crate::ui::theme::Theme::read_system_theme();
+        self.theme_sync_phase = (self.theme_sync_phase + 0.08) % (2.0 * std::f32::consts::PI);
+        let intensity = 0.85 + 0.15 * ((self.theme_sync_phase.sin() + 1.0) * 0.5);
+        RgbColor::new(
+            (base_col.r as f32 * intensity).min(255.0) as u8,
+            (base_col.g as f32 * intensity).min(255.0) as u8,
+            (base_col.b as f32 * intensity).min(255.0) as u8,
+        )
+    }
+
+    /// Voice Pulse: Speech reactive using clean microphone (ghelper-audio) via non-blocking worker.
+    /// G-Helper AGC & cubic curve: lights up brightly when speaking, rests at 15% when silent.
     pub fn compute_voice_pulse_color(&mut self) -> RgbColor {
-        let level = Self::sample_mic_level();
+        self.audio_service.start("@DEFAULT_SOURCE@");
+        let level = self.audio_service.get_mic_level();
         self.mic_level = level;
         let c = if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
             RgbColor::new(0, 255, 255)
         } else {
             self.aura_data.color1
         };
-        // Ambient room noise gate: <= 5% is resting silence
-        if level <= 5 {
+
+        if level == 0 {
+            // Resting ambient glow
             RgbColor::new(
                 (c.r as f32 * 0.15) as u8,
                 (c.g as f32 * 0.15) as u8,
                 (c.b as f32 * 0.15) as u8,
             )
         } else {
-            let norm = ((level - 5) as f32 / 95.0).clamp(0.0, 1.0);
-            let mult = 0.15 + 0.85 * (norm * norm);
+            let mult = 0.15 + 0.85 * (level as f32 / 100.0);
             RgbColor::new(
                 (c.r as f32 * mult).min(255.0) as u8,
                 (c.g as f32 * mult).min(255.0) as u8,
@@ -715,24 +936,26 @@ impl<B: Backend> AppState<B> {
         }
     }
 
-    /// Audio Pulse: Sound output reactive visualizer.
-    /// Pulses keyboard illumination with music beat drops and audio volume.
+    /// Audio Pulse: Sound output reactive visualizer via non-blocking worker.
+    /// Pulses keyboard illumination with music beat drops and audio playback intensity.
     pub fn compute_audio_pulse_color(&mut self) -> RgbColor {
-        let level = Self::sample_audio_out_level();
+        self.audio_service.start("@DEFAULT_MONITOR@");
+        let level = self.audio_service.get_audio_level();
         self.audio_level = level;
         let c = if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
             RgbColor::new(0, 255, 255)
         } else {
             self.aura_data.color1
         };
-        if level <= 5 {
+
+        if level == 0 {
             RgbColor::new(
-                (c.r as f32 * 0.15) as u8,
-                (c.g as f32 * 0.15) as u8,
-                (c.b as f32 * 0.15) as u8,
+                (c.r as f32 * 0.12) as u8,
+                (c.g as f32 * 0.12) as u8,
+                (c.b as f32 * 0.12) as u8,
             )
         } else {
-            let mult = 0.20 + 0.80 * (level as f32 / 100.0);
+            let mult = 0.12 + 0.88 * (level as f32 / 100.0);
             RgbColor::new(
                 (c.r as f32 * mult).min(255.0) as u8,
                 (c.g as f32 * mult).min(255.0) as u8,
@@ -741,29 +964,32 @@ impl<B: Backend> AppState<B> {
         }
     }
 
-    /// Audio Wave: Dynamic audio spectrum EQ.
-    /// Shifts hue across the color spectrum based on playback intensity.
+    /// Audio Wave: Dynamic audio spectrum EQ via non-blocking worker.
+    /// Shifts hue across the frequency spectrum based on playback intensity.
     pub fn compute_audio_wave_color(&mut self) -> RgbColor {
-        let level = Self::sample_audio_out_level();
+        self.audio_service.start("@DEFAULT_MONITOR@");
+        let level = self.audio_service.get_audio_level();
         self.audio_level = level;
         let hue = if level < 15 {
             240.0 // Calm deep blue
-        } else if level < 40 {
-            180.0 // Cyan / teal
-        } else if level < 70 {
-            100.0 // Lime green / yellow
-        } else if level < 85 {
-            40.0  // Warm orange
+        } else if level < 35 {
+            190.0 // Cyan / teal
+        } else if level < 60 {
+            120.0 // Lime green
+        } else if level < 80 {
+            45.0  // Warm orange
         } else {
             0.0   // Peak red
         };
-        let val = 30.0 + 70.0 * (level as f32 / 100.0);
+        let val = 25.0 + 75.0 * (level as f32 / 100.0);
         RgbColor::from_hsv(hue, 100.0, val)
     }
 
-    /// Ambient Light: Real-time screen ambient sync on Wayland.
+    /// Ambient Light: Real-time screen ambient sync on Wayland (ported from G-Helper).
+    /// Uses grim with crop "0,400 1920x770", saturation boost +0.3, and smooth factor 0.65.
     pub fn compute_ambient_color(&mut self) -> RgbColor {
-        if let Some(col) = Self::sample_wayland_screen_color() {
+        self.ambient_service.start();
+        if let Some(col) = self.ambient_service.get_color() {
             self.last_ambient_color = Some(col);
             col
         } else if let Some(last) = self.last_ambient_color {
@@ -779,7 +1005,17 @@ impl<B: Backend> AppState<B> {
     /// or on every tick for animated/audio effects.
     pub async fn apply_software_effect(&mut self) {
         if self.aura_brightness == 0 || self.active_software_effect == SoftwareEffect::None {
+            self.audio_service.stop();
+            self.ambient_service.stop();
             return;
+        }
+
+        // Clean up services if no longer in audio or ambient modes
+        if !matches!(self.active_software_effect, SoftwareEffect::VoicePulse | SoftwareEffect::AudioPulse | SoftwareEffect::AudioWave) {
+            self.audio_service.stop();
+        }
+        if self.active_software_effect != SoftwareEffect::AmbientLight {
+            self.ambient_service.stop();
         }
 
         let is_animated = self.active_software_effect.is_animated();
@@ -787,6 +1023,8 @@ impl<B: Backend> AppState<B> {
             SoftwareEffect::RainbowWave => self.compute_rainbow_wave_color(),
             SoftwareEffect::ColorCycle => self.compute_color_cycle_color(),
             SoftwareEffect::FireFlicker => self.compute_fire_flicker_color(),
+            SoftwareEffect::Clouds => self.compute_clouds_color(),
+            SoftwareEffect::ThemeSync => self.compute_theme_sync_color(),
             SoftwareEffect::Strobe => self.compute_strobe_color(),
             SoftwareEffect::VoicePulse => self.compute_voice_pulse_color(),
             SoftwareEffect::AudioPulse => self.compute_audio_pulse_color(),
