@@ -31,12 +31,9 @@ pub fn render_ui<B: Backend>(f: &mut Frame, app: &AppState<B>) {
     }
 
     // Determine centered content column
-    // Max width 104 columns (Fan may use up to 132 on wide screens).
-    let max_w = if app.current_tab == ActiveTab::FanCurves && size.width >= 132 {
-        132
-    } else {
-        104
-    };
+    // Fixed max width 104 columns across all tabs so margins and layout geometry remain
+    // perfectly consistent and never jump or expand when switching to the Fan tab.
+    let max_w = 104;
     let content_w = if size.width >= max_w {
         max_w
     } else {
