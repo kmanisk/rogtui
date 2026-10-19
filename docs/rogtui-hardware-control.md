@@ -78,6 +78,8 @@ Reads the active desktop palette dynamically from `~/.local/state/theme/colors.s
 - **BatteryLevel:** Visual state-of-charge indicator (100% emerald -> 50% amber -> 20% critical crimson).
 - **CpuLoad:** CPU usage monitor tracking aggregate core utilization.
 
+*For detailed microsecond latency budgets, CPU core %, memory footprint, and gaming impact metrics, see [Lighting Effects Performance & Overhead](lighting-effects-performance-and-overhead.md).*
+
 ---
 
 ## Power Profiles & Battery Health Management
