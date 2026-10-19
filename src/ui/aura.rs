@@ -11,7 +11,7 @@ use crate::backend::Backend;
 use crate::backend::types::{RgbColor, SoftwareEffect};
 use crate::ui::widgets::{
     choice_widget, label_value_row, panel_block, section_rule, segmented_control,
-    slider_widget_tinted,
+    slider_widget_tinted, toggle_widget,
 };
 
 pub fn get_color_presets() -> [(&'static str, RgbColor); 10] {
@@ -106,13 +106,17 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let label_width = 18;
 
     let mut lines = Vec::new();
-    lines.push(Line::from(""));
+    if area.height >= 22 {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 1. Lighting Controls
     // -------------------------------------------------------------------------
     lines.push(section_rule("Keyboard Lighting", width, theme));
-    lines.push(Line::from(""));
+    if area.height >= 22 {
+        lines.push(Line::from(""));
+    }
 
     // Row 0: Brightness (Segmented control: Off · Low · Med · High)
     let brightness_opts = ["Off", "Low", "Med", "High"];
@@ -224,40 +228,50 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // -------------------------------------------------------------------------
     // 2. Power States
     // -------------------------------------------------------------------------
-    lines.push(Line::from(""));
+    if area.height >= 22 {
+        lines.push(Line::from(""));
+    }
     lines.push(section_rule("Hardware Power States", width, theme));
-    lines.push(Line::from(""));
+    if area.height >= 22 {
+        lines.push(Line::from(""));
+    }
 
     let is_boot_sel = app.aura_selected_field == 9;
     let is_awake_sel = app.aura_selected_field == 10;
     let is_sleep_sel = app.aura_selected_field == 11;
     let is_shut_sel = app.aura_selected_field == 12;
 
-    let format_power_badge = |label: &str, on: bool, sel: bool| -> Vec<Span<'static>> {
-        let icon = if on { "● " } else { "○ " };
-        let icon_col = if on { theme.ok } else { theme.dim };
-        let text_style = if sel {
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.dim)
-        };
-        let bracket_col = if sel { theme.accent } else { Color::Rgb(70, 75, 85) };
-        vec![
-            Span::styled("[", Style::default().fg(bracket_col)),
-            Span::styled(icon, Style::default().fg(icon_col)),
-            Span::styled(label.to_string(), text_style),
-            Span::styled("]   ", Style::default().fg(bracket_col)),
-        ]
-    };
+    lines.push(label_value_row(
+        "Boot",
+        toggle_widget(app.aura_power.boot, is_boot_sel, theme),
+        is_boot_sel,
+        label_width,
+        theme,
+    ));
 
-    let mut power_spans = Vec::new();
-    power_spans.extend(format_power_badge("Boot", app.aura_power.boot, is_boot_sel));
-    power_spans.extend(format_power_badge("Awake", app.aura_power.awake, is_awake_sel));
-    power_spans.extend(format_power_badge("Sleep", app.aura_power.sleep, is_sleep_sel));
-    power_spans.extend(format_power_badge("Shutdown", app.aura_power.shutdown, is_shut_sel));
+    lines.push(label_value_row(
+        "Awake",
+        toggle_widget(app.aura_power.awake, is_awake_sel, theme),
+        is_awake_sel,
+        label_width,
+        theme,
+    ));
 
-    let any_power_sel = is_boot_sel || is_awake_sel || is_sleep_sel || is_shut_sel;
-    lines.push(label_value_row("Keep lit during", power_spans, any_power_sel, label_width, theme));
+    lines.push(label_value_row(
+        "Sleep",
+        toggle_widget(app.aura_power.sleep, is_sleep_sel, theme),
+        is_sleep_sel,
+        label_width,
+        theme,
+    ));
+
+    lines.push(label_value_row(
+        "Shutdown",
+        toggle_widget(app.aura_power.shutdown, is_shut_sel, theme),
+        is_shut_sel,
+        label_width,
+        theme,
+    ));
 
     f.render_widget(Paragraph::new(lines), area);
 

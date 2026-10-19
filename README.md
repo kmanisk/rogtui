@@ -57,8 +57,8 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly interfa
 - Contextual lighting controls: 18 effect modes including Static, Breathe, Color Cycle, Rainbow Wave, Audio Pulse, Voice Pulse, Ambient Screen Sync (Wayland grim), and Dynamic Theme.
 - Dynamic Theme hot reloading: monitors `~/.local/state/theme/colors.sh` on each tick and syncs rising accent colors (Void purple `#bb9af7`, Scaryforest teal `#77beb4`, Gruvbox `#ebdbb2`, Catppuccin `#f5c2e7`, Nord `#88c0d0`).
 - Color selection: Preset picker, custom hex with live `██` block preview, and direct hex entry modal (`#`).
-- Tinted R, G, B channel sliders with high-contrast visible track.
-- Compact hardware power state badges: `Keep lit during: [● Boot] [● Awake] [○ Sleep] [○ Shutdown]`.
+- Hardware power states: individual vertically navigated rows (`Boot`, `Awake`, `Sleep`, `Shutdown`) with standard `● On` / `○ Off` toggle controls.
+- Smooth Audio Wave: Dynamic continuous spectrum frequency EQ with exponential moving average level smoothing and low-pass hue interpolation.
 - Interactive 24-bit RGB/HSV color picker modal (`c`).
 
 ### 5. System (Tab 5)

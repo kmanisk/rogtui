@@ -840,18 +840,10 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             app.aura_selected_field = next_aura_field(app, app.aura_selected_field, -1);
         }
         KeyCode::Left | KeyCode::Char('h') => {
-            if (10..=12).contains(&app.aura_selected_field) {
-                app.aura_selected_field -= 1;
-            } else {
-                adjust_aura_field(app, -1).await;
-            }
+            adjust_aura_field(app, -1).await;
         }
         KeyCode::Right | KeyCode::Char('l') => {
-            if (9..=11).contains(&app.aura_selected_field) {
-                app.aura_selected_field += 1;
-            } else {
-                adjust_aura_field(app, 1).await;
-            }
+            adjust_aura_field(app, 1).await;
         }
         KeyCode::Char('c') => {
             if app.aura_brightness > 0 {
@@ -1071,18 +1063,26 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         }
         9 => {
             app.aura_power.boot = !app.aura_power.boot;
+            let state = if app.aura_power.boot { "enabled" } else { "disabled" };
+            app.set_status(format!("Boot backlight {state}"), false);
             let _ = app.backend.set_aura_power(&app.aura_power).await;
         }
         10 => {
             app.aura_power.awake = !app.aura_power.awake;
+            let state = if app.aura_power.awake { "enabled" } else { "disabled" };
+            app.set_status(format!("Awake backlight {state}"), false);
             let _ = app.backend.set_aura_power(&app.aura_power).await;
         }
         11 => {
             app.aura_power.sleep = !app.aura_power.sleep;
+            let state = if app.aura_power.sleep { "enabled" } else { "disabled" };
+            app.set_status(format!("Sleep backlight {state}"), false);
             let _ = app.backend.set_aura_power(&app.aura_power).await;
         }
         12 => {
             app.aura_power.shutdown = !app.aura_power.shutdown;
+            let state = if app.aura_power.shutdown { "enabled" } else { "disabled" };
+            app.set_status(format!("Shutdown backlight {state}"), false);
             let _ = app.backend.set_aura_power(&app.aura_power).await;
         }
         _ => {}

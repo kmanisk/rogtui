@@ -443,6 +443,8 @@ pub struct AppState<B: Backend> {
     pub flicker_seed: u32,
     pub mic_level: u8,
     pub audio_level: u8,
+    pub audio_level_smooth: f32,
+    pub audio_wave_hue: f32,
     pub last_ambient_color: Option<RgbColor>,
     pub clouds_phase: f32,
     pub theme_sync_phase: f32,
@@ -590,6 +592,8 @@ impl<B: Backend> AppState<B> {
             flicker_seed: 1234567,
             mic_level: 0,
             audio_level: 0,
+            audio_level_smooth: 0.0,
+            audio_wave_hue: 240.0,
             last_ambient_color: None,
             clouds_phase: 0.0,
             theme_sync_phase: 0.0,
@@ -1114,24 +1118,32 @@ impl<B: Backend> AppState<B> {
     }
 
     /// Audio Wave: Dynamic audio spectrum EQ via non-blocking worker.
-    /// Shifts hue across the frequency spectrum based on playback intensity.
+    /// Smoothly transitions color across the spectrum based on playback intensity.
     pub fn compute_audio_wave_color(&mut self) -> RgbColor {
         self.audio_service.start("@DEFAULT_MONITOR@");
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
-        let hue = if level < 15 {
-            240.0 // Calm deep blue
-        } else if level < 35 {
-            190.0 // Cyan / teal
-        } else if level < 60 {
-            120.0 // Lime green
-        } else if level < 80 {
-            45.0  // Warm orange
+
+        let raw_level = level as f32;
+        // Smooth audio level tracking (attack faster than decay for punchy response without jitter)
+        let alpha_level = if raw_level > self.audio_level_smooth { 0.28 } else { 0.10 };
+        self.audio_level_smooth = self.audio_level_smooth * (1.0 - alpha_level) + raw_level * alpha_level;
+
+        // Continuous hue mapping across spectrum:
+        // 0% -> 240° (Deep blue), 30% -> 180° (Teal/Cyan), 60% -> 110° (Green/Lime), 85% -> 45° (Amber), 100% -> 0° (Red)
+        let target_hue = (240.0 - (self.audio_level_smooth / 100.0) * 240.0).clamp(0.0, 240.0);
+
+        // Smooth gradual hue transition so colors change gracefully and musically, not rapidly
+        let alpha_hue = 0.12;
+        self.audio_wave_hue = self.audio_wave_hue * (1.0 - alpha_hue) + target_hue * alpha_hue;
+
+        let val = if self.aura_brightness == 1 && level == 0 {
+            0.0
         } else {
-            0.0   // Peak red
+            (25.0 + 75.0 * (self.audio_level_smooth / 100.0)).clamp(15.0, 100.0)
         };
-        let val = 25.0 + 75.0 * (level as f32 / 100.0);
-        RgbColor::from_hsv(hue, 100.0, val)
+
+        RgbColor::from_hsv(self.audio_wave_hue, 100.0, val)
     }
 
     /// Ambient Light: Real-time screen ambient sync on Wayland (ported from G-Helper).

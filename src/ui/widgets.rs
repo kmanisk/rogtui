@@ -480,7 +480,7 @@ pub fn render_footer_two_rows<B: Backend>(
                     6 => vec![("h/l", "secondary preset")],
                     7 => vec![("h/l", "speed")],
                     8 => vec![("h/l", "direction")],
-                    9..=12 => vec![("Space", "toggle state")],
+                    9..=12 => vec![("h/l", "toggle"), ("Space", "toggle")],
                     _ => vec![("h/l", "adjust")],
                 }
             }

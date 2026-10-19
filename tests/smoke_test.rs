@@ -550,19 +550,25 @@ async fn test_unified_aura_mode_and_preset_cycling() {
     let preset_name = rogtui::ui::aura::get_active_preset_name(app.aura_data.color1);
     assert_ne!(preset_name, "Custom", "Preset color should match a known preset name");
 
-    // 3. Test Power States in bottom bar (Fields 9..=12)
+    // 3. Test Power States vertical navigation and toggle (Fields 9..=12)
     app.aura_selected_field = 9; // Boot
     let orig_boot = app.aura_power.boot;
-    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char(' '))).await;
-    assert_ne!(app.aura_power.boot, orig_boot, "Space on field 9 should toggle boot state");
-
-    // Right moves to Awake (10)
     rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
-    assert_eq!(app.aura_selected_field, 10, "Right from 9 should navigate to 10");
+    assert_ne!(app.aura_power.boot, orig_boot, "l on field 9 should toggle boot state");
+
+    // Down (j) moves down to Awake (10)
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('j'))).await;
+    assert_eq!(app.aura_selected_field, 10, "Down (j) from 9 should navigate to 10");
 
     let orig_awake = app.aura_power.awake;
-    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char(' '))).await;
-    assert_ne!(app.aura_power.awake, orig_awake, "Space on field 10 should toggle awake state");
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('h'))).await;
+    assert_ne!(app.aura_power.awake, orig_awake, "h on field 10 should toggle awake state");
+
+    // Down (j) moves down to Sleep (11) and Shutdown (12)
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('j'))).await;
+    assert_eq!(app.aura_selected_field, 11, "Down (j) from 10 should navigate to 11");
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('j'))).await;
+    assert_eq!(app.aura_selected_field, 12, "Down (j) from 11 should navigate to 12");
 }
 
 #[test]
