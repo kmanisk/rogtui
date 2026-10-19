@@ -74,6 +74,31 @@ pub fn detect_kernel() -> String {
     }
 }
 
+pub fn detect_arch() -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    {
+        "x86_64-v3"
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        "aarch64"
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        "x86_64"
+    }
+}
+
+pub fn detect_platform_driver() -> &'static str {
+    if std::path::Path::new("/sys/devices/platform/asus-nb-wmi").exists() {
+        "asus-nb-wmi"
+    } else if std::path::Path::new("/sys/devices/platform/asus_wmi").exists() {
+        "asus_wmi"
+    } else {
+        "asus-wmi"
+    }
+}
+
 pub fn detect_model() -> String {
     let p = std::fs::read_to_string("/sys/class/dmi/id/product_name").unwrap_or_default();
     let p = p.trim();
@@ -185,13 +210,14 @@ pub fn render_system<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let label_width = 18;
 
     let mut lines = Vec::new();
-    lines.push(Line::from(""));
+    if area.height >= 26 {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 1. Display Section
     // -------------------------------------------------------------------------
     lines.push(section_rule("Display", width, theme));
-    lines.push(Line::from(""));
 
     // Row 0: Panel Overdrive
     let overdrive = app.sensors.panel_overdrive.unwrap_or(true);
@@ -210,7 +236,6 @@ pub fn render_system<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // 2. Graphics Section (Read-only display of current mode)
     // -------------------------------------------------------------------------
     lines.push(section_rule("Graphics", width, theme));
-    lines.push(Line::from(""));
 
     let mode_str = format_gpu_mode(app.gpu_mode);
     let mut gpu_spans = vec![
@@ -226,7 +251,6 @@ pub fn render_system<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // 3. Diagnostics Action
     // -------------------------------------------------------------------------
     lines.push(section_rule("Diagnostics", width, theme));
-    lines.push(Line::from(""));
 
     let export_row_idx = if has_auto_bright { 2 } else { 1 };
     let export_spans = vec![
@@ -246,87 +270,49 @@ pub fn render_system<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // 4. About Section (Clean read-only block)
     // -------------------------------------------------------------------------
     lines.push(section_rule("About", width, theme));
-    lines.push(Line::from(""));
 
-    lines.push(label_value_row(
-        "Model",
-        vec![Span::styled(detect_model(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
+    let health_pct = app.sensors.battery_health_percent.unwrap_or(98);
+    let mut about_items = vec![
+        ("Model", detect_model()),
+        ("Processor", detect_cpu()),
+        ("Graphics", detect_gpu()),
+    ];
+    if area.height >= 20 {
+        about_items.push(("Memory", detect_ram()));
+        about_items.push(("NVIDIA Driver", detect_nvidia_driver()));
+    }
+    about_items.push(("OS", detect_os()));
+    if area.height >= 20 {
+        about_items.push(("Kernel", detect_kernel()));
+    }
+    if area.height >= 26 {
+        about_items.push(("Architecture", detect_arch().to_string()));
+    }
+    if area.height >= 20 {
+        about_items.push(("Platform Driver", detect_platform_driver().to_string()));
+        about_items.push(("Session", detect_session().to_string()));
+    }
+    about_items.push(("Display", detect_display()));
+    if area.height >= 20 {
+        about_items.push(("Battery Health", format!("{health_pct}%")));
+        about_items.push(("BIOS", detect_bios()));
+    }
+    about_items.push(("ROGTUI", format!("v{}", env!("CARGO_PKG_VERSION"))));
 
-    lines.push(label_value_row(
-        "Processor",
-        vec![Span::styled(detect_cpu(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
-
-    lines.push(label_value_row(
-        "Graphics",
-        vec![Span::styled(detect_gpu(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
-
-    lines.push(label_value_row(
-        "Memory",
-        vec![Span::styled(detect_ram(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
-
-    lines.push(label_value_row(
-        "NVIDIA Driver",
-        vec![Span::styled(detect_nvidia_driver(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
-
-    lines.push(label_value_row(
-        "OS",
-        vec![Span::styled(detect_os(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
-
-    lines.push(label_value_row(
-        "Session",
-        vec![Span::styled(detect_session(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
-
-    lines.push(label_value_row(
-        "Display",
-        vec![Span::styled(detect_display(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
-
-    lines.push(label_value_row(
-        "BIOS",
-        vec![Span::styled(detect_bios(), Style::default().fg(theme.fg))],
-        false,
-        label_width,
-        theme,
-    ));
-
-    lines.push(label_value_row(
-        "ROGTUI",
-        vec![Span::styled(format!("v{}", env!("CARGO_PKG_VERSION")), Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))],
-        false,
-        label_width,
-        theme,
-    ));
+    for (label, val) in about_items {
+        let style = if label == "ROGTUI" {
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg)
+        };
+        lines.push(label_value_row(
+            label,
+            vec![Span::styled(val, style)],
+            false,
+            label_width,
+            theme,
+        ));
+    }
 
     f.render_widget(Paragraph::new(lines), area);
 }

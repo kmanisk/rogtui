@@ -174,33 +174,19 @@ async fn test_aura_brightness_guardrail() {
     app.aura_brightness = 0; // Off
     app.aura_selected_field = 0;
 
-    // Press 'j' (Down) -> must skip fields 1..8 and jump straight to field 9
+    // Press 'j' (Down) -> moves to field 1 (Effect Mode), remaining accessible when brightness is 0
     rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('j'))).await;
-    assert_eq!(app.aura_selected_field, 9, "Should skip effect fields when brightness is 0");
+    assert_eq!(app.aura_selected_field, 1, "Mode and effect controls remain accessible when brightness is 0");
 
-    // Press 'k' (Up) -> jumps back to field 0
-    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('k'))).await;
-    assert_eq!(app.aura_selected_field, 0, "Should jump back to field 0 from field 9");
-
-    // Force selection to field 1 (Effect Mode) while brightness is 0 and try to adjust with 'l'
-    app.aura_selected_field = 1;
+    // Adjust effect mode with 'l' while brightness is 0 -> updates state so it is applied when turned on
     let initial_mode = app.aura_mode;
     rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('l'))).await;
-    assert_eq!(app.aura_mode, initial_mode, "Effect mode must NOT change when brightness is 0");
-    assert!(app.status_message.is_some(), "Status warning must be shown");
+    assert_ne!(app.aura_mode, initial_mode, "Effect mode should change when configured while backlight is off");
 
     // Now turn brightness up to 1 (Low) on field 0
     app.aura_selected_field = 0;
     rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('l'))).await;
     assert_eq!(app.aura_brightness, 1, "Brightness should be Low (1)");
-
-    // Press 'j' (Down) -> now moves into field 1 (Effect Mode)
-    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('j'))).await;
-    assert_eq!(app.aura_selected_field, 1, "Should enter field 1 when brightness > 0");
-
-    // Adjust effect mode with 'l' -> now it should change
-    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('l'))).await;
-    assert_ne!(app.aura_mode, initial_mode, "Effect mode should change when brightness > 0");
 }
 
 #[tokio::test]

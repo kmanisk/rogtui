@@ -22,19 +22,10 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // 1. Profile Section
     // -------------------------------------------------------------------------
     lines.push(section_rule("Profile", width, theme));
-    lines.push(Line::from(""));
 
     // Row 0: Active Profile
     let active_spans = choice_widget(app.platform_profile.as_str(), app.power_selected_field == 0, theme);
     lines.push(label_value_row("Active profile", active_spans, app.power_selected_field == 0, label_width, theme));
-    lines.push(Line::from(""));
-
-    // Subheading: Switch automatically
-    lines.push(Line::from(vec![
-        Span::raw("  "),
-        Span::styled("Switch automatically", Style::default().fg(theme.dim)),
-    ]));
-    lines.push(Line::from(""));
 
     // Row 1: When plugged in
     let ac_label = if app.auto_ac {
@@ -59,7 +50,6 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // 2. Battery Section
     // -------------------------------------------------------------------------
     lines.push(section_rule("Battery", width, theme));
-    lines.push(Line::from(""));
 
     // Current Battery Level (Read-only row to eliminate confusion between level and limit)
     let current_level = app.sensors.battery_charge_percent.unwrap_or(60);
@@ -112,7 +102,6 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // 3. Status Section (Read-only, skipped in navigation)
     // -------------------------------------------------------------------------
     lines.push(section_rule("Status", width, theme));
-    lines.push(Line::from(""));
 
     let health_pct = app.sensors.battery_health_percent.unwrap_or(98);
     lines.push(label_value_row(

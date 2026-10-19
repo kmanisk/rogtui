@@ -161,10 +161,12 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                             app.aura_data.color1 = col;
                         }
                         app.user_custom_color = true;
-                        if app.aura_mode == 0 && app.active_software_effect == SoftwareEffect::None {
-                            let _ = app.backend.write_volatile_rgb(col).await;
-                        } else {
-                            app.apply_software_effect().await;
+                        if app.aura_brightness > 0 {
+                            if app.aura_mode == 0 && app.active_software_effect == SoftwareEffect::None {
+                                let _ = app.backend.write_volatile_rgb(col).await;
+                            } else {
+                                app.apply_software_effect().await;
+                            }
                         }
                         app.set_status(format!("Set color to {}", col.to_hex()), false);
                     }
@@ -220,7 +222,7 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                 } else {
                     app.aura_data.color1 = chosen;
                 }
-                if app.aura_mode == 0 {
+                if app.aura_mode == 0 && app.aura_brightness > 0 {
                     let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
                 }
                 app.show_color_picker_modal = false;
@@ -430,6 +432,8 @@ fn export_system_report<B: Backend>(app: &mut AppState<B>) {
     doc.push_str(&format!("- NVIDIA Driver: {}\n", crate::ui::system::detect_nvidia_driver()));
     doc.push_str(&format!("- BIOS: {}\n", crate::ui::system::detect_bios()));
     doc.push_str(&format!("- Kernel: {}\n", crate::ui::system::detect_kernel()));
+    doc.push_str(&format!("- Architecture: {}\n", crate::ui::system::detect_arch()));
+    doc.push_str(&format!("- Platform Driver: {}\n", crate::ui::system::detect_platform_driver()));
     doc.push_str(&format!("- Session: {}\n", crate::ui::system::detect_session()));
     doc.push_str(&format!("- Display: {}\n", crate::ui::system::detect_display()));
     doc.push_str(&format!("- ROGTUI Version: {}\n\n", env!("CARGO_PKG_VERSION")));
@@ -839,11 +843,7 @@ async fn apply_fancurves<B: Backend>(app: &mut AppState<B>) {
 }
 
 fn next_aura_field<B: Backend>(app: &AppState<B>, current: usize, dir: i32) -> usize {
-    let mut all: Vec<usize> = if app.aura_brightness == 0 {
-        vec![0, 9, 10, 11, 12]
-    } else {
-        vec![0, 1, 7, 8, 2, 3, 4, 5, 6, 9, 10, 11, 12]
-    };
+    let mut all: Vec<usize> = vec![0, 1, 7, 8, 2, 3, 4, 5, 6, 9, 10, 11, 12];
 
     if app.has_slash_led {
         all.push(13);
@@ -877,30 +877,20 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             adjust_aura_field(app, 1).await;
         }
         KeyCode::Char('c') => {
-            if app.aura_brightness > 0 {
-                let slot = if app.aura_selected_field == 6 { 2 } else { 1 };
-                app.open_color_picker(slot);
-            } else {
-                app.set_status("Backlight is Off. Increase brightness to access colors.", true);
-            }
+            let slot = if app.aura_selected_field == 6 { 2 } else { 1 };
+            app.open_color_picker(slot);
         }
         KeyCode::Char('#') => {
-            if app.aura_brightness > 0 {
-                app.hex_input_buffer = Some(String::new());
-                app.set_status("Enter 6 hex digits (e.g. ff4080) and press Enter:", false);
-            } else {
-                app.set_status("Backlight is Off. Increase brightness to access colors.", true);
-            }
+            app.hex_input_buffer = Some(String::new());
+            app.set_status("Enter 6 hex digits (e.g. ff4080) and press Enter:", false);
         }
         KeyCode::Enter => {
-            if app.aura_brightness > 0 {
-                if app.aura_selected_field == 2 || (3..=5).contains(&app.aura_selected_field) {
-                    app.open_color_picker(1);
-                    return;
-                } else if app.aura_selected_field == 6 {
-                    app.open_color_picker(2);
-                    return;
-                }
+            if app.aura_selected_field == 2 || (3..=5).contains(&app.aura_selected_field) {
+                app.open_color_picker(1);
+                return;
+            } else if app.aura_selected_field == 6 {
+                app.open_color_picker(2);
+                return;
             }
             adjust_aura_field(app, 1).await;
         }
@@ -928,12 +918,6 @@ async fn activate_software_mode<B: Backend>(app: &mut AppState<B>, effect: Softw
 }
 
 async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
-    // Guardrail: if brightness is Off (0), block all effect and color configuration
-    if app.aura_brightness == 0 && (1..=8).contains(&app.aura_selected_field) {
-        app.set_status("Backlight is Off. Increase brightness to access effects.", true);
-        return;
-    }
-
     match app.aura_selected_field {
         0 => {
             let b = (app.aura_brightness as i32 + dir).clamp(0, 3) as u32;
@@ -966,7 +950,9 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                     app.aura_mode = 0;
                     app.aura_data.mode = 0;
                     let _ = app.backend.set_aura_mode(0).await;
-                    let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                    if app.aura_brightness > 0 {
+                        let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                    }
                     app.set_status("Aura Mode: Static", false);
                 }
                 1 => {
@@ -1031,7 +1017,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
             app.aura_data.color1 = presets[next_pos];
             app.user_custom_color = next_pos != 0;
-            if app.aura_mode == 0 {
+            if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
             let preset_name = crate::ui::aura::get_active_preset_name(app.aura_data.color1);
@@ -1041,7 +1027,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let r = (app.aura_data.color1.r as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.r = r;
             app.user_custom_color = true;
-            if app.aura_mode == 0 {
+            if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
         }
@@ -1049,7 +1035,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let g = (app.aura_data.color1.g as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.g = g;
             app.user_custom_color = true;
-            if app.aura_mode == 0 {
+            if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
         }
@@ -1057,7 +1043,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let b = (app.aura_data.color1.b as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.b = b;
             app.user_custom_color = true;
-            if app.aura_mode == 0 {
+            if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
         }

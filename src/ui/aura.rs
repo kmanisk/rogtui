@@ -102,7 +102,6 @@ pub fn is_aura_field_supported<B: Backend>(app: &AppState<B>, field: usize) -> b
 
 pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let theme = &app.theme;
-    let is_off = app.aura_brightness == 0;
     let width = area.width as usize;
     let label_width = 18;
 
@@ -115,9 +114,6 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // 1. Lighting Controls
     // -------------------------------------------------------------------------
     lines.push(section_rule("Keyboard Lighting", width, theme));
-    if area.height >= 22 {
-        lines.push(Line::from(""));
-    }
 
     // Row 0: Brightness (Segmented control: Off · Low · Med · High)
     let brightness_opts = ["Off", "Low", "Med", "High"];
@@ -135,21 +131,21 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     ];
     let mode_idx = get_current_mode_index(app);
     let mode_name = mode_names.get(mode_idx).unwrap_or(&"Static");
-    let mode_spans = choice_widget(mode_name, app.aura_selected_field == 1 && !is_off, theme);
-    lines.push(label_value_row("Mode", mode_spans, app.aura_selected_field == 1 && !is_off, label_width, theme));
+    let mode_spans = choice_widget(mode_name, app.aura_selected_field == 1, theme);
+    lines.push(label_value_row("Mode", mode_spans, app.aura_selected_field == 1, label_width, theme));
 
     // Optional Speed & Direction if supported by active mode
-    if is_aura_field_supported(app, 7) && !is_off {
+    if is_aura_field_supported(app, 7) {
         let speed_spans = choice_widget(&app.aura_data.speed, app.aura_selected_field == 7, theme);
         lines.push(label_value_row("Animation speed", speed_spans, app.aura_selected_field == 7, label_width, theme));
     }
-    if is_aura_field_supported(app, 8) && !is_off {
+    if is_aura_field_supported(app, 8) {
         let dir_spans = choice_widget(&app.aura_data.direction, app.aura_selected_field == 8, theme);
         lines.push(label_value_row("Direction", dir_spans, app.aura_selected_field == 8, label_width, theme));
     }
 
     // Color controls if supported by active mode
-    if is_aura_field_supported(app, 2) && !is_off {
+    if is_aura_field_supported(app, 2) {
         lines.push(Line::from(""));
         let col = app.aura_data.color1;
         let preset_name = get_active_preset_name(col);
@@ -214,7 +210,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     }
 
     // Secondary Color if supported (e.g. Breathe)
-    if is_aura_field_supported(app, 6) && !is_off {
+    if is_aura_field_supported(app, 6) {
         let col2 = app.aura_data.color2;
         let swatch_color2 = Color::Rgb(col2.r, col2.g, col2.b);
         let mut col2_spans = vec![
@@ -233,9 +229,6 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         lines.push(Line::from(""));
     }
     lines.push(section_rule("Hardware Power States", width, theme));
-    if area.height >= 22 {
-        lines.push(Line::from(""));
-    }
 
     let is_boot_sel = app.aura_selected_field == 9;
     let is_awake_sel = app.aura_selected_field == 10;
@@ -279,9 +272,6 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             lines.push(Line::from(""));
         }
         lines.push(section_rule("Slash Lighting", width, theme));
-        if area.height >= 22 {
-            lines.push(Line::from(""));
-        }
 
         let is_slash_mode_sel = app.aura_selected_field == 13;
         let is_slash_b_sel = app.aura_selected_field == 14;
