@@ -572,7 +572,7 @@ impl<B: Backend> AppState<B> {
                 "--process-time-msec=20",
                 "--channels=1",
                 "--rate=8000",
-                "--format=u8",
+                "--format=s16le",
                 "-d",
                 "@DEFAULT_SOURCE@",
             ])
@@ -584,10 +584,10 @@ impl<B: Backend> AppState<B> {
             Err(_) => return 0,
         };
 
-        let mut buf = [128u8; 800];
+        let mut buf = [0u8; 1600];
         let mut bytes_read = 0;
         if let Some(mut stdout) = child.stdout.take() {
-            while bytes_read < 800 {
+            while bytes_read < 1600 {
                 match stdout.read(&mut buf[bytes_read..]) {
                     Ok(0) => break,
                     Ok(n) => bytes_read += n,
@@ -598,15 +598,22 @@ impl<B: Backend> AppState<B> {
         let _ = child.kill();
         let _ = child.wait();
 
-        if bytes_read == 0 {
+        if bytes_read < 2 {
             return 0;
         }
-        let peak = buf[..bytes_read]
-            .iter()
-            .map(|&b| (b as i16 - 128).abs())
-            .max()
-            .unwrap_or(0);
-        ((peak as u32 * 100) / 127).min(100) as u8
+
+        let num_samples = bytes_read / 2;
+        let mut max_amp: u32 = 0;
+        for i in 0..num_samples {
+            let sample = i16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]]);
+            let amp = sample.unsigned_abs() as u32;
+            if amp > max_amp {
+                max_amp = amp;
+            }
+        }
+
+        // Apply 16x digital pre-amp boost for laptop microphone sensitivity
+        ((max_amp * 100 * 16) / 32767).min(100) as u8
     }
 
     /// Sample a 100ms slice of audio playback output via parec from @DEFAULT_MONITOR@.
@@ -619,7 +626,7 @@ impl<B: Backend> AppState<B> {
                 "--process-time-msec=20",
                 "--channels=1",
                 "--rate=8000",
-                "--format=u8",
+                "--format=s16le",
                 "-d",
                 "@DEFAULT_MONITOR@",
             ])
@@ -631,10 +638,10 @@ impl<B: Backend> AppState<B> {
             Err(_) => return 0,
         };
 
-        let mut buf = [128u8; 800];
+        let mut buf = [0u8; 1600];
         let mut bytes_read = 0;
         if let Some(mut stdout) = child.stdout.take() {
-            while bytes_read < 800 {
+            while bytes_read < 1600 {
                 match stdout.read(&mut buf[bytes_read..]) {
                     Ok(0) => break,
                     Ok(n) => bytes_read += n,
@@ -645,15 +652,22 @@ impl<B: Backend> AppState<B> {
         let _ = child.kill();
         let _ = child.wait();
 
-        if bytes_read == 0 {
+        if bytes_read < 2 {
             return 0;
         }
-        let peak = buf[..bytes_read]
-            .iter()
-            .map(|&b| (b as i16 - 128).abs())
-            .max()
-            .unwrap_or(0);
-        ((peak as u32 * 100) / 127).min(100) as u8
+
+        let num_samples = bytes_read / 2;
+        let mut max_amp: u32 = 0;
+        for i in 0..num_samples {
+            let sample = i16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]]);
+            let amp = sample.unsigned_abs() as u32;
+            if amp > max_amp {
+                max_amp = amp;
+            }
+        }
+
+        // Apply 4x digital gain for speaker output VU
+        ((max_amp * 100 * 4) / 32767).min(100) as u8
     }
 
     /// Sample real-time center pixel of the active Wayland screen via grim.
@@ -683,15 +697,16 @@ impl<B: Backend> AppState<B> {
         } else {
             self.aura_data.color1
         };
-        // Ambient room noise gate: <= 8% is resting silence
-        if level <= 8 {
+        // Ambient room noise gate: <= 5% is resting silence
+        if level <= 5 {
             RgbColor::new(
                 (c.r as f32 * 0.15) as u8,
                 (c.g as f32 * 0.15) as u8,
                 (c.b as f32 * 0.15) as u8,
             )
         } else {
-            let mult = 0.20 + 0.80 * ((level - 8) as f32 / 92.0);
+            let norm = ((level - 5) as f32 / 95.0).clamp(0.0, 1.0);
+            let mult = 0.15 + 0.85 * (norm * norm);
             RgbColor::new(
                 (c.r as f32 * mult).min(255.0) as u8,
                 (c.g as f32 * mult).min(255.0) as u8,

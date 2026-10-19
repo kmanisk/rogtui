@@ -11,6 +11,72 @@ use crate::backend::Backend;
 use crate::backend::types::{RgbColor, SoftwareEffect};
 use crate::ui::widgets::panel_block;
 
+pub fn get_color_presets() -> [(&'static str, RgbColor); 10] {
+    let (_, theme_col) = crate::ui::theme::Theme::get_system_theme_color();
+    [
+        ("Dynamic Theme", theme_col),
+        ("Gruvbox", RgbColor::new(235, 219, 178)),
+        ("Catppuccin", RgbColor::new(245, 194, 231)),
+        ("Cyberpunk", RgbColor::new(0, 255, 170)),
+        ("Nord", RgbColor::new(136, 192, 208)),
+        ("Sunset Amber", RgbColor::new(255, 122, 0)),
+        ("Red", RgbColor::new(255, 0, 0)),
+        ("Green", RgbColor::new(0, 255, 0)),
+        ("Blue", RgbColor::new(0, 136, 255)),
+        ("White", RgbColor::new(255, 255, 255)),
+    ]
+}
+
+pub fn get_active_preset_name(color: RgbColor) -> &'static str {
+    let (_, theme_col) = crate::ui::theme::Theme::get_system_theme_color();
+    if color == theme_col {
+        "Dynamic Theme"
+    } else if color == RgbColor::new(235, 219, 178) {
+        "Gruvbox"
+    } else if color == RgbColor::new(245, 194, 231) {
+        "Catppuccin"
+    } else if color == RgbColor::new(0, 255, 170) {
+        "Cyberpunk"
+    } else if color == RgbColor::new(136, 192, 208) {
+        "Nord"
+    } else if color == RgbColor::new(255, 122, 0) {
+        "Sunset Amber"
+    } else if color == RgbColor::new(255, 0, 0) {
+        "Red"
+    } else if color == RgbColor::new(0, 255, 0) {
+        "Green"
+    } else if color == RgbColor::new(0, 136, 255) {
+        "Blue"
+    } else if color == RgbColor::new(255, 255, 255) {
+        "White"
+    } else {
+        "Custom"
+    }
+}
+
+pub fn get_current_mode_index<B: Backend>(app: &AppState<B>) -> usize {
+    match app.active_software_effect {
+        SoftwareEffect::RainbowWave => 4,
+        SoftwareEffect::ColorCycle => 5,
+        SoftwareEffect::FireFlicker => 6,
+        SoftwareEffect::Strobe => 7,
+        SoftwareEffect::VoicePulse => 8,
+        SoftwareEffect::AudioPulse => 9,
+        SoftwareEffect::AudioWave => 10,
+        SoftwareEffect::AmbientLight => 11,
+        SoftwareEffect::Heatmap => 12,
+        SoftwareEffect::GpuMode => 13,
+        SoftwareEffect::BatteryStatus => 14,
+        SoftwareEffect::CpuLoad => 15,
+        SoftwareEffect::None => match app.aura_mode {
+            1 => 1,
+            2 => 2,
+            10 => 3,
+            _ => 0,
+        },
+    }
+}
+
 pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let theme = &app.theme;
     let is_off = app.aura_brightness == 0;
@@ -27,16 +93,15 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     };
 
     // -------------------------------------------------------------------------
-    // Left Pane: Structured Controls (Effect, Colours, Software Effects, Power)
+    // Left Pane: Structured Controls (Effect & Brightness, Colours, Bottom Power)
     // -------------------------------------------------------------------------
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(6), // Effect & Brightness
-            Constraint::Length(6), // Colours
-            Constraint::Length(6), // Custom Software Effects (1 Hz Live Sync)
-            Constraint::Length(3), // Power States
-            Constraint::Min(0),
+            Constraint::Length(6), // Colours & Calibration
+            Constraint::Min(0),    // Flexible spacer pushing power states to bottom
+            Constraint::Length(3), // Hardware Power States (bottom bar)
         ])
         .split(chunks[0]);
 
@@ -54,38 +119,37 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     };
     let b_bars = match app.aura_brightness {
         0 => "░░░",
-        1 => "█░░",
-        2 => "██░",
-        _ => "███",
+        1 => "■░░",
+        2 => "■■░",
+        _ => "■■■",
     };
 
-    let mode_str = match app.active_software_effect {
-        SoftwareEffect::RainbowWave => "Rainbow Wave (Custom)",
-        SoftwareEffect::ColorCycle => "Color Cycle (Custom)",
-        SoftwareEffect::FireFlicker => "Fire Flicker (Custom)",
-        SoftwareEffect::Strobe => "Strobe / Flash (Custom)",
-        SoftwareEffect::VoicePulse => "Voice Pulse (Clean Mic)",
-        SoftwareEffect::AudioPulse => "Audio Pulse (Speaker Out)",
-        SoftwareEffect::AudioWave => "Audio Wave (Spectrum EQ)",
-        SoftwareEffect::AmbientLight => "Ambient Light (Wayland Sync)",
-        SoftwareEffect::Heatmap => "Heatmap (Telemetry)",
-        SoftwareEffect::GpuMode => "GPU Mode (Telemetry)",
-        SoftwareEffect::BatteryStatus => "Battery Status (Telemetry)",
-        SoftwareEffect::CpuLoad => "CPU Load (Telemetry)",
-        SoftwareEffect::None => match app.aura_mode {
-            0 => "Static",
-            1 => "Breathe",
-            2 => "Rainbow Cycle",
-            10 => "Pulse",
-            _ => "Custom",
-        },
-    };
+    let mode_idx = get_current_mode_index(app);
+    let mode_names = [
+        "Static",
+        "Breathe",
+        "Rainbow Cycle",
+        "Pulse",
+        "Rainbow Wave (Custom)",
+        "Color Cycle (Custom)",
+        "Fire Flicker (Custom)",
+        "Strobe / Flash (Custom)",
+        "Voice Pulse (Clean Mic)",
+        "Audio Pulse (Speaker Out)",
+        "Audio Wave (Spectrum EQ)",
+        "Ambient Light (Wayland)",
+        "Heatmap (Telemetry)",
+        "GPU Mode (Telemetry)",
+        "Battery Status (Telemetry)",
+        "CPU Load (Telemetry)",
+    ];
+    let mode_str = mode_names.get(mode_idx).unwrap_or(&"Custom");
 
     let eff_fields = [
         (0, "Backlight Brightness", format!("< {brightness_str} >  [{b_bars}]")),
-        (1, "Aura Effect Mode", if is_off { "< Disabled (Backlight Off) >".to_string() } else { format!("< {mode_str} >") }),
-        (7, "Animation Speed", if is_off { "< Disabled >".to_string() } else { format!("< {} >", app.aura_data.speed) }),
-        (8, "Animation Direction", if is_off { "< Disabled >".to_string() } else { format!("< {} >", app.aura_data.direction) }),
+        (1, "Aura Mode", if is_off { "< Disabled (Backlight Off) >".to_string() } else { format!("< {mode_str} >") }),
+        (7, "Animation Speed", if is_off || mode_idx == 0 || mode_idx == 3 { "< Disabled >".to_string() } else { format!("< {} >", app.aura_data.speed) }),
+        (8, "Animation Direction", if is_off || mode_idx == 0 || mode_idx == 1 || mode_idx == 3 { "< Disabled >".to_string() } else { format!("< {} >", app.aura_data.direction) }),
     ];
 
     let mut eff_lines = Vec::new();
@@ -123,148 +187,51 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     fn mini_bar(val: u8) -> String {
         let filled = (val as usize * 8) / 255;
         let empty = 8 - filled;
-        format!("[{}{}] {:>3}", "█".repeat(filled), "░".repeat(empty), val)
+        format!("{}{}", "■".repeat(filled), "░".repeat(empty))
     }
 
+    let preset_name = get_active_preset_name(c1);
     let mut col_lines = Vec::new();
 
-    // Primary Color Row
-    let c1_sel = app.aura_selected_field == 2;
-    let c1_hex = c1.to_hex();
-    let c1_header = format!("  Primary Color [c: picker]: {}  ", c1_hex);
+    // Row 0: Color Preset Selector (Field 2)
+    let p_sel = app.aura_selected_field == 2;
+    let p_header = format!("  Color Preset [h/l]      : < {preset_name} >");
     col_lines.push(Line::from(vec![
-        Span::styled(c1_header, if c1_sel { theme.sel_style() } else { Style::default().fg(theme.dim) }),
+        Span::styled(p_header, if p_sel { theme.sel_style() } else { Style::default().fg(theme.dim) }),
+    ]));
+
+    // Row 1: Primary Color Hex + Swatch
+    let c1_hex = c1.to_hex();
+    col_lines.push(Line::from(vec![
+        Span::styled(format!("  Primary Color [c: picker]: {c1_hex}  "), Style::default().fg(theme.dim)),
         Span::styled("██████", c1_swatch),
     ]));
 
-    // RGB Mini-gauges Row
+    // Row 2: RGB Sliders (Fields 3, 4, 5)
     let r_sel = app.aura_selected_field == 3;
     let g_sel = app.aura_selected_field == 4;
     let b_sel = app.aura_selected_field == 5;
     col_lines.push(Line::from(vec![
         Span::styled("    R: ", Style::default().fg(theme.dim)),
-        Span::styled(mini_bar(c1.r), if r_sel { theme.sel_style() } else { Style::default().fg(if is_off { theme.dim } else { theme.err }) }),
+        Span::styled(format!("{} {:>3}", mini_bar(c1.r), c1.r), if r_sel { theme.sel_style() } else { Style::default().fg(if is_off { theme.dim } else { theme.err }) }),
         Span::styled("   G: ", Style::default().fg(theme.dim)),
-        Span::styled(mini_bar(c1.g), if g_sel { theme.sel_style() } else { Style::default().fg(if is_off { theme.dim } else { theme.ok }) }),
+        Span::styled(format!("{} {:>3}", mini_bar(c1.g), c1.g), if g_sel { theme.sel_style() } else { Style::default().fg(if is_off { theme.dim } else { theme.ok }) }),
         Span::styled("   B: ", Style::default().fg(theme.dim)),
-        Span::styled(mini_bar(c1.b), if b_sel { theme.sel_style() } else { Style::default().fg(if is_off { theme.dim } else { Color::Blue }) }),
+        Span::styled(format!("{} {:>3}", mini_bar(c1.b), c1.b), if b_sel { theme.sel_style() } else { Style::default().fg(if is_off { theme.dim } else { Color::Blue }) }),
     ]));
 
-    // Secondary Color Row (only for effects supporting 2 colors: breathe, pulse, custom)
+    // Row 3: Secondary Color (Field 6)
     let c2_sel = app.aura_selected_field == 6;
     let c2_hex = c2.to_hex();
-    let c2_header = format!("  Secondary Color [c: picker]: {}  ", c2_hex);
     col_lines.push(Line::from(vec![
-        Span::styled(c2_header, if c2_sel { theme.sel_style() } else { Style::default().fg(theme.dim) }),
+        Span::styled(format!("  Secondary Color [c: picker]: {c2_hex}  "), if c2_sel { theme.sel_style() } else { Style::default().fg(theme.dim) }),
         Span::styled("██████", c2_swatch),
     ]));
 
-    // Palette Swatches Row
-    let (_theme_name, theme_col) = crate::ui::theme::Theme::get_system_theme_color();
-    let presets = [
-        ("Theme", theme_col),
-        ("Gruvbox", RgbColor::new(235, 219, 178)),
-        ("Catppuccin", RgbColor::new(245, 194, 231)),
-        ("Cyberpunk", RgbColor::new(0, 255, 170)),
-        ("Nord", RgbColor::new(136, 192, 208)),
-        ("Amber", RgbColor::new(255, 122, 0)),
-        ("Red", RgbColor::new(255, 0, 0)),
-        ("Green", RgbColor::new(0, 255, 0)),
-        ("Blue", RgbColor::new(0, 136, 255)),
-        ("White", RgbColor::new(255, 255, 255)),
-    ];
-    let mut palette_spans = vec![Span::styled("  Presets: ", Style::default().fg(theme.dim))];
-    for (name, col) in &presets {
-        let is_cur = c1.r == col.r && c1.g == col.g && c1.b == col.b;
-        let p_style = if is_cur {
-            Style::default().fg(Color::Rgb(col.r, col.g, col.b)).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else {
-            Style::default().fg(Color::Rgb(col.r, col.g, col.b))
-        };
-        palette_spans.push(Span::styled(format!("[{name}] "), p_style));
-    }
-    col_lines.push(Line::from(palette_spans));
-
     f.render_widget(Paragraph::new(col_lines), col_inner);
 
-    // 3. Custom Software Effects Panel (1 Hz Live Sync)
-    let sw_block = panel_block(
-        " Custom Software Effects (Animations | Audio & Mic | Telemetry) ",
-        (13..=24).contains(&app.aura_selected_field),
-        theme,
-    );
-    let sw_inner = sw_block.inner(left_chunks[2]);
-    f.render_widget(sw_block, left_chunks[2]);
-
-    let col_w1 = (sw_inner.width / 3) as usize;
-    let col_w2 = col_w1;
-    let col_w3 = (sw_inner.width as usize).saturating_sub(col_w1 + col_w2);
-
-    type EffectItem = (usize, &'static str, SoftwareEffect);
-
-    // 3 Columns: Animations (13-16), Audio & Visual (17-20), Telemetry (21-24)
-    let rows: [(EffectItem, EffectItem, EffectItem); 4] = [
-        (
-            (13, "Rainbow Wave", SoftwareEffect::RainbowWave),
-            (17, "Voice Pulse (Mic)", SoftwareEffect::VoicePulse),
-            (21, "Heatmap (Temp)", SoftwareEffect::Heatmap),
-        ),
-        (
-            (14, "Color Cycle", SoftwareEffect::ColorCycle),
-            (18, "Audio Pulse", SoftwareEffect::AudioPulse),
-            (22, "GPU Mode Indicator", SoftwareEffect::GpuMode),
-        ),
-        (
-            (15, "Fire Flicker", SoftwareEffect::FireFlicker),
-            (19, "Audio Wave (EQ)", SoftwareEffect::AudioWave),
-            (23, "Battery Status", SoftwareEffect::BatteryStatus),
-        ),
-        (
-            (16, "Strobe / Flash", SoftwareEffect::Strobe),
-            (20, "Ambient (Wayland)", SoftwareEffect::AmbientLight),
-            (24, "CPU Load Indicator", SoftwareEffect::CpuLoad),
-        ),
-    ];
-
-    let mut sw_lines = Vec::new();
-    for ((c1_idx, c1_label, c1_eff), (c2_idx, c2_label, c2_eff), (c3_idx, c3_label, c3_eff)) in rows {
-        let cols = [
-            (c1_idx, c1_label, c1_eff, col_w1),
-            (c2_idx, c2_label, c2_eff, col_w2),
-            (c3_idx, c3_label, c3_eff, col_w3),
-        ];
-
-        let mut row_spans = Vec::new();
-        for (idx, label, eff, width) in cols {
-            let is_active = app.active_software_effect == eff;
-            let is_sel = app.aura_selected_field == idx;
-            let tag = if is_active { "[x]" } else { "[ ]" };
-            let text = format!(" {tag} {label}");
-            let padded = if text.len() < width {
-                format!("{}{}", text, " ".repeat(width - text.len()))
-            } else if width > 0 {
-                text.chars().take(width).collect()
-            } else {
-                String::new()
-            };
-
-            let span = if is_sel && !is_off {
-                Span::styled(padded, theme.sel_style())
-            } else if is_off {
-                Span::styled(padded, Style::default().fg(theme.dim))
-            } else if is_active {
-                Span::styled(padded, Style::default().fg(theme.ok).add_modifier(Modifier::BOLD))
-            } else {
-                Span::styled(padded, Style::default().fg(theme.fg))
-            };
-            row_spans.push(span);
-        }
-        sw_lines.push(Line::from(row_spans));
-    }
-    f.render_widget(Paragraph::new(sw_lines), sw_inner);
-
-    // 4. Power States Panel
-    let pwr_block = panel_block(" Hardware Power States ", (9..=12).contains(&app.aura_selected_field), theme);
+    // 3. Hardware Power States Panel (Pushed to bottom bar)
+    let pwr_block = panel_block(" Hardware Power States (ACPI) ", (9..=12).contains(&app.aura_selected_field), theme);
     let pwr_inner = pwr_block.inner(left_chunks[3]);
     f.render_widget(pwr_block, left_chunks[3]);
 
@@ -279,7 +246,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     for (idx, name, is_on) in &states {
         let is_sel = app.aura_selected_field == *idx;
         let tag = if *is_on { "[x]" } else { "[ ]" };
-        let text = format!("{name}: {tag}   ");
+        let text = format!("{tag} {name}     ");
         if is_sel {
             state_spans.push(Span::styled(text, theme.sel_style()));
         } else {
@@ -300,92 +267,24 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         let details_inner = details_block.inner(chunks[1]);
         f.render_widget(details_block, chunks[1]);
 
-        let (active_title, active_desc, effect_category) = match app.active_software_effect {
-            SoftwareEffect::RainbowWave => (
-                "Rainbow Wave",
-                "Smooth continuous spectrum sweep across the full 360° color wheel. Rotates hue continuously based on Animation Speed and Direction.",
-                "Custom Animation",
-            ),
-            SoftwareEffect::ColorCycle => (
-                "Color Cycle",
-                "Sequentially transitions through 7 distinct primary colors. Steps at interval defined by Animation Speed and Direction.",
-                "Custom Animation",
-            ),
-            SoftwareEffect::FireFlicker => (
-                "Fire Flicker",
-                "Simulates warm fireplace embers with shifting amber, orange, and red tones. Generates organic color variance on each tick.",
-                "Custom Animation",
-            ),
-            SoftwareEffect::Strobe => (
-                "Strobe / Flash",
-                "High-contrast blinking pulse alternating between Primary Color and black. Creates a rhythmic flash effect without saving to BIOS flash.",
-                "Custom Animation",
-            ),
-            SoftwareEffect::VoicePulse => (
-                "Voice Pulse (Mic)",
-                "Microphone voice-reactive illumination. G-Helper style speech sync using the clean microphone (ghelper-audio) - lights up when speaking, rests when silent.",
-                "Audio & Visual Sync",
-            ),
-            SoftwareEffect::AudioPulse => (
-                "Audio Pulse",
-                "Sound output reactive visualizer. Pulses keyboard illumination to music beat drops and audio playback volume across speakers and headphones.",
-                "Audio & Visual Sync",
-            ),
-            SoftwareEffect::AudioWave => (
-                "Audio Wave (EQ)",
-                "Dynamic audio spectrum equalizer. Shifts keyboard color hue and intensity across the frequency and amplitude spectrum from deep blue to peak red.",
-                "Audio & Visual Sync",
-            ),
-            SoftwareEffect::AmbientLight => (
-                "Ambient (Wayland)",
-                "Real-time screen ambient sync on Wayland. Samples the display compositor via grim to continuously mirror movie, video, or game visuals on the keyboard.",
-                "Audio & Visual Sync",
-            ),
-            SoftwareEffect::Heatmap => (
-                "Heatmap (Temp)",
-                "Maps highest component temperature to smooth RGB gradient: Cool (<30°C) -> Blue | Warm (60°C) -> Yellow | Hot (>=90°C) -> Red.",
-                "System Telemetry",
-            ),
-            SoftwareEffect::GpuMode => (
-                "GPU Mode Indicator",
-                "Color reflects active supergfx GPU mode: Integrated -> Green | Hybrid -> Yellow | Direct MUX -> Orange-Red.",
-                "System Telemetry",
-            ),
-            SoftwareEffect::BatteryStatus => (
-                "Battery Status",
-                "Color reflects battery charge level and state: Charging -> Bright Green | Low (<20%) -> Red | Balanced -> Teal.",
-                "System Telemetry",
-            ),
-            SoftwareEffect::CpuLoad => (
-                "CPU Load Indicator",
-                "Keyboard color dynamically reflects real-time CPU utilization: Idle (<30%) -> Green | Moderate (30-65%) -> Yellow | Peak (>85%) -> Red.",
-                "System Telemetry",
-            ),
-            SoftwareEffect::None => match app.aura_selected_field {
-                13 => ("Rainbow Wave", "Smooth continuous spectrum sweep across the full 360° color wheel. Press Enter or Space to activate.", "Custom Animation"),
-                14 => ("Color Cycle", "Sequentially transitions through 7 distinct primary colors. Press Enter or Space to activate.", "Custom Animation"),
-                15 => ("Fire Flicker", "Simulates warm fireplace embers with shifting amber, orange, and red tones. Press Enter or Space to activate.", "Custom Animation"),
-                16 => ("Strobe / Flash", "High-contrast blinking pulse alternating between Primary Color and black. Press Enter or Space to activate.", "Custom Animation"),
-                17 => ("Voice Pulse (Mic)", "Microphone voice-reactive illumination using ghelper-audio clean mic. Press Enter or Space to activate.", "Audio & Visual Sync"),
-                18 => ("Audio Pulse", "Pulsing illumination synced to system audio output volume. Press Enter or Space to activate.", "Audio & Visual Sync"),
-                19 => ("Audio Wave (EQ)", "Dynamic audio spectrum EQ shifting hue across the color wheel. Press Enter or Space to activate.", "Audio & Visual Sync"),
-                20 => ("Ambient (Wayland)", "Screen ambient sync sampling Wayland display compositor via grim. Press Enter or Space to activate.", "Audio & Visual Sync"),
-                21 => ("Heatmap (Temp)", "Maps CPU/GPU temperature to keyboard color. Press Enter or Space to activate.", "System Telemetry"),
-                22 => ("GPU Mode Indicator", "Keyboard color reflects current GPU operating mode. Press Enter or Space to activate.", "System Telemetry"),
-                23 => ("Battery Status", "Keyboard color reflects battery charge state and direction. Press Enter or Space to activate.", "System Telemetry"),
-                24 => ("CPU Load Indicator", "Keyboard color reflects processor workload percentage. Press Enter or Space to activate.", "System Telemetry"),
-                _ => (
-                    mode_str,
-                    match app.aura_mode {
-                        0 => "Static: Displays a continuous solid single-zone color. Applies Primary Color.",
-                        1 => "Breathe: Smooth sinusoidal pulsing transition between Primary Color and Secondary Color.",
-                        2 => "Rainbow Cycle: Hardware spectral progression through the full 360° RGB color wheel.",
-                        10 => "Pulse: Rhythmic strobe pulses driven directly by the keyboard controller.",
-                        _ => "Hardware firmware aura lighting effect.",
-                    },
-                    "Hardware Firmware",
-                ),
-            },
+        let (active_title, active_desc, effect_category) = match mode_idx {
+            0 => ("Static", "Displays a continuous solid single-zone color. Applies Primary Color.", "Hardware Firmware"),
+            1 => ("Breathe", "Smooth sinusoidal pulsing transition between Primary Color and Secondary Color.", "Hardware Firmware"),
+            2 => ("Rainbow Cycle", "Hardware spectral progression through the full 360° RGB color wheel.", "Hardware Firmware"),
+            3 => ("Pulse", "Rhythmic strobe pulses driven directly by the keyboard controller.", "Hardware Firmware"),
+            4 => ("Rainbow Wave", "Smooth continuous spectrum sweep across the full 360° color wheel. Rotates hue continuously based on Animation Speed and Direction.", "Custom Animation"),
+            5 => ("Color Cycle", "Sequentially transitions through 7 distinct primary colors. Steps at interval defined by Animation Speed and Direction.", "Custom Animation"),
+            6 => ("Fire Flicker", "Simulates warm fireplace embers with shifting amber, orange, and red tones. Generates organic color variance on each tick.", "Custom Animation"),
+            7 => ("Strobe / Flash", "High-contrast blinking pulse alternating between Primary Color and black. Creates a rhythmic flash effect without saving to BIOS flash.", "Custom Animation"),
+            8 => ("Voice Pulse (Mic)", "Microphone voice-reactive illumination. G-Helper style speech sync using the clean microphone (ghelper-audio) - lights up when speaking, rests when silent.", "Audio & Visual Sync"),
+            9 => ("Audio Pulse", "Sound output reactive visualizer. Pulses keyboard illumination to music beat drops and audio playback volume across speakers and headphones.", "Audio & Visual Sync"),
+            10 => ("Audio Wave (EQ)", "Dynamic audio spectrum equalizer. Shifts keyboard color hue and intensity across the frequency and amplitude spectrum from deep blue to peak red.", "Audio & Visual Sync"),
+            11 => ("Ambient Light (Wayland)", "Real-time screen ambient sync on Wayland. Samples the display compositor via grim to continuously mirror movie, video, or game visuals on the keyboard.", "Audio & Visual Sync"),
+            12 => ("Heatmap (Temp)", "Maps highest component temperature to smooth RGB gradient: Cool (<30°C) -> Blue | Warm (60°C) -> Yellow | Hot (>=90°C) -> Red.", "System Telemetry"),
+            13 => ("GPU Mode Indicator", "Color reflects active supergfx GPU mode: Integrated -> Green | Hybrid -> Yellow | Direct MUX -> Orange-Red.", "System Telemetry"),
+            14 => ("Battery Status", "Color reflects battery charge level and state: Charging -> Bright Green | Low (<20%) -> Red | Balanced -> Teal.", "System Telemetry"),
+            15 => ("CPU Load Indicator", "Keyboard color dynamically reflects real-time CPU utilization: Idle (<30%) -> Green | Moderate (30-65%) -> Yellow | Peak (>85%) -> Red.", "System Telemetry"),
+            _ => ("Custom", "Aura lighting effect.", "Hardware Firmware"),
         };
 
         let mut right_lines = vec![
@@ -409,24 +308,26 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         // Context-aware effect telemetry readouts
         if app.active_software_effect == SoftwareEffect::VoicePulse {
             let level = app.mic_level.min(100);
-            let filled = (level as usize * 10) / 100;
-            let empty = 10 - filled;
-            let bar = format!("[{}{}] {}%", "█".repeat(filled), "░".repeat(empty), level);
+            let filled = (level as usize * 12) / 100;
+            let empty = 12 - filled;
             right_lines.push(Line::from(""));
             right_lines.push(Line::from(vec![
                 Span::styled("  Clean Mic (ghelper-audio): ", Style::default().fg(theme.dim)),
-                Span::styled(bar, Style::default().fg(if level > 25 { theme.ok } else { theme.dim })),
+                Span::styled("■".repeat(filled), Style::default().fg(if level > 25 { theme.ok } else { theme.warn })),
+                Span::styled("■".repeat(empty), Style::default().fg(Color::Rgb(55, 60, 68))),
+                Span::styled(format!(" {:>3}%", level), Style::default().fg(theme.fg)),
                 Span::styled(if level > 25 { "  [SPEECH]" } else { "  [IDLE]" }, Style::default().fg(if level > 25 { theme.warn } else { theme.dim })),
             ]));
         } else if matches!(app.active_software_effect, SoftwareEffect::AudioPulse | SoftwareEffect::AudioWave) {
             let level = app.audio_level.min(100);
-            let filled = (level as usize * 10) / 100;
-            let empty = 10 - filled;
-            let bar = format!("[{}{}] {}%", "█".repeat(filled), "░".repeat(empty), level);
+            let filled = (level as usize * 12) / 100;
+            let empty = 12 - filled;
             right_lines.push(Line::from(""));
             right_lines.push(Line::from(vec![
                 Span::styled("  Audio Output VU: ", Style::default().fg(theme.dim)),
-                Span::styled(bar, Style::default().fg(if level > 10 { theme.accent } else { theme.dim })),
+                Span::styled("■".repeat(filled), Style::default().fg(if level > 10 { theme.accent } else { theme.warn })),
+                Span::styled("■".repeat(empty), Style::default().fg(Color::Rgb(55, 60, 68))),
+                Span::styled(format!(" {:>3}%", level), Style::default().fg(theme.fg)),
             ]));
         } else if app.active_software_effect == SoftwareEffect::AmbientLight {
             right_lines.push(Line::from(""));

@@ -202,34 +202,43 @@ pub fn render_gauge(
     val_str: &str,
     percent: u32,
     width: usize,
-    color: Color,
+    _color: Color,
     theme: &Theme,
 ) -> Line<'static> {
     let p = percent.clamp(0, 100) as usize;
-    let total_substeps = width * 8;
-    let filled_substeps = (p * total_substeps) / 100;
-    let full_blocks = filled_substeps / 8;
-    let rem = filled_substeps % 8;
+    let filled_blocks = (p * width + 50) / 100;
 
     let mut spans = Vec::new();
-    spans.push(Span::styled(format!("{label: <16}: "), Style::default().fg(theme.dim)));
-    spans.push(Span::styled("[", Style::default().fg(theme.dim)));
+    spans.push(Span::styled(format!("  {label: <14}: "), Style::default().fg(theme.dim)));
 
-    if full_blocks > 0 {
-        spans.push(Span::styled("█".repeat(full_blocks), Style::default().fg(color)));
-    }
-    if rem > 0 && full_blocks < width {
-        const FRACTIONAL: [char; 8] = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
-        spans.push(Span::styled(FRACTIONAL[rem].to_string(), Style::default().fg(color)));
+    // Btop-style empty track color
+    let empty_color = Color::Rgb(55, 60, 68);
+    let is_battery = label.to_ascii_lowercase().contains("battery");
+
+    for i in 0..width {
+        if i < filled_blocks {
+            let seg_pct = (i * 100) / width;
+            let seg_color = if is_battery {
+                if seg_pct < 20 {
+                    theme.err
+                } else if seg_pct < 60 {
+                    theme.warn
+                } else {
+                    theme.ok
+                }
+            } else if seg_pct < 45 {
+                theme.ok
+            } else if seg_pct < 75 {
+                theme.warn
+            } else {
+                theme.err
+            };
+            spans.push(Span::styled("■", Style::default().fg(seg_color)));
+        } else {
+            spans.push(Span::styled("■", Style::default().fg(empty_color)));
+        }
     }
 
-    let filled_cells = if rem > 0 { full_blocks + 1 } else { full_blocks };
-    let empty_cells = width.saturating_sub(filled_cells);
-    if empty_cells > 0 {
-        spans.push(Span::styled("░".repeat(empty_cells), Style::default().fg(theme.dim)));
-    }
-
-    spans.push(Span::styled("]", Style::default().fg(theme.dim)));
     spans.push(Span::styled(format!("  {val_str}"), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)));
 
     Line::from(spans)

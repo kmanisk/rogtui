@@ -501,3 +501,70 @@ async fn test_hardware_sensitive_confirmations() {
     assert!(app.confirm_modal.is_none(), "Modal must dismiss after confirming with 'y'");
 }
 
+#[tokio::test]
+async fn test_unified_aura_mode_and_preset_cycling() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    use rogtui::backend::types::SoftwareEffect;
+
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+
+    app.current_tab = ActiveTab::Aura;
+    app.aura_brightness = 2; // Medium
+
+    // 1. Test Field 1: Mode cycling across all 16 modes
+    app.aura_selected_field = 1;
+    let initial_idx = rogtui::ui::aura::get_current_mode_index(&app);
+    assert_eq!(initial_idx, 0, "Initial mode should be 0 (Static)");
+
+    // Cycle right 8 times -> should land on Voice Pulse (mode 8)
+    for _ in 0..8 {
+        rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
+    }
+    assert_eq!(app.active_software_effect, SoftwareEffect::VoicePulse);
+    assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 8);
+
+    // Cycle right 8 more times -> should complete 16-step full circle back to 0 (Static)
+    for _ in 0..8 {
+        rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
+    }
+    assert_eq!(app.active_software_effect, SoftwareEffect::None);
+    assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 0);
+
+    // 2. Test Field 2: Color Preset cycling
+    app.aura_selected_field = 2;
+    let initial_color = app.aura_data.color1;
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
+    assert_ne!(app.aura_data.color1, initial_color, "Preset cycling must change color1");
+    let preset_name = rogtui::ui::aura::get_active_preset_name(app.aura_data.color1);
+    assert_ne!(preset_name, "Custom", "Preset color should match a known preset name");
+
+    // 3. Test Power States in bottom bar (Fields 9..=12)
+    app.aura_selected_field = 9; // Boot
+    let orig_boot = app.aura_power.boot;
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char(' '))).await;
+    assert_ne!(app.aura_power.boot, orig_boot, "Space on field 9 should toggle boot state");
+
+    // Right moves to Awake (10)
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
+    assert_eq!(app.aura_selected_field, 10, "Right from 9 should navigate to 10");
+
+    let orig_awake = app.aura_power.awake;
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char(' '))).await;
+    assert_ne!(app.aura_power.awake, orig_awake, "Space on field 10 should toggle awake state");
+}
+
+#[test]
+fn test_btop_gauge_rendering() {
+    use ratatui::style::Color;
+    let theme = rogtui::ui::theme::Theme::default();
+
+    let line = rogtui::ui::widgets::render_gauge("CPU Usage", "45%", 45, 20, Color::Cyan, &theme);
+    let rendered_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+    assert!(rendered_text.contains("CPU Usage"), "Gauge must contain label");
+    assert!(rendered_text.contains("45%"), "Gauge must contain value string");
+    assert!(rendered_text.contains('■'), "Btop gauge must use segmented black square glyphs");
+}
+
+

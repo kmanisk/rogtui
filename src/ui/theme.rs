@@ -2,6 +2,7 @@ use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use crate::backend::types::{PlatformProfile, RgbColor};
 
@@ -70,33 +71,38 @@ impl Theme {
     /// and determine the dominant aesthetic color for static keyboard lighting.
     /// Supports Gruvbox (grayish-cream #EBDBB2), Catppuccin (pinkish #F5C2E7), etc.
     pub fn get_system_theme_color() -> (String, RgbColor) {
-        if let Ok(home) = std::env::var("HOME") {
-            let path = PathBuf::from(home).join(".local/state/theme/colors.sh");
-            if let Ok(content) = fs::read_to_string(&path) {
-                let mut name = String::new();
-                let mut accent = None;
-                let mut fg = None;
-                for line in content.lines() {
-                    let trimmed = line.trim();
-                    if let Some(n) = trimmed.strip_prefix("export THEME_NAME=") {
-                        name = n.trim_matches('"').to_string();
-                    } else if let Some(a) = trimmed.strip_prefix("export THEME_ACCENT=") {
-                        accent = RgbColor::from_hex(a.trim_matches('"')).ok();
-                    } else if let Some(f) = trimmed.strip_prefix("export THEME_FG=") {
-                        fg = RgbColor::from_hex(f.trim_matches('"')).ok();
+        static CACHED: OnceLock<(String, RgbColor)> = OnceLock::new();
+        CACHED
+            .get_or_init(|| {
+                if let Ok(home) = std::env::var("HOME") {
+                    let path = PathBuf::from(home).join(".local/state/theme/colors.sh");
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        let mut name = String::new();
+                        let mut accent = None;
+                        let mut fg = None;
+                        for line in content.lines() {
+                            let trimmed = line.trim();
+                            if let Some(n) = trimmed.strip_prefix("export THEME_NAME=") {
+                                name = n.trim_matches('"').to_string();
+                            } else if let Some(a) = trimmed.strip_prefix("export THEME_ACCENT=") {
+                                accent = RgbColor::from_hex(a.trim_matches('"')).ok();
+                            } else if let Some(f) = trimmed.strip_prefix("export THEME_FG=") {
+                                fg = RgbColor::from_hex(f.trim_matches('"')).ok();
+                            }
+                        }
+                        if name.eq_ignore_ascii_case("gruvbox") {
+                            return ("Gruvbox".to_string(), fg.unwrap_or(RgbColor::new(235, 219, 178)));
+                        } else if name.eq_ignore_ascii_case("catppuccin") {
+                            return ("Catppuccin".to_string(), RgbColor::new(245, 194, 231));
+                        } else if let Some(acc) = accent {
+                            let label = if name.is_empty() { "Theme".to_string() } else { name };
+                            return (label, acc);
+                        }
                     }
                 }
-                if name.eq_ignore_ascii_case("gruvbox") {
-                    return ("Gruvbox".to_string(), fg.unwrap_or(RgbColor::new(235, 219, 178)));
-                } else if name.eq_ignore_ascii_case("catppuccin") {
-                    return ("Catppuccin".to_string(), RgbColor::new(245, 194, 231));
-                } else if let Some(acc) = accent {
-                    let label = if name.is_empty() { "Theme".to_string() } else { name };
-                    return (label, acc);
-                }
-            }
-        }
-        ("Theme".to_string(), RgbColor::new(0, 220, 255))
+                ("Theme".to_string(), RgbColor::new(0, 220, 255))
+            })
+            .clone()
     }
 
     pub fn sel_style(&self) -> Style {
