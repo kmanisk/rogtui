@@ -12,14 +12,15 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly interfa
 - **Idle CPU Utilization:** 0.0%
 - **Memory Footprint (RSS):** ~4.0 MiB
 - **Binary Size (Stripped):** 2.4 MiB
-- **Rendering Architecture:** 100% event-driven; redraws occur exclusively on user input, terminal resize, or DBus state events. No fixed-FPS game loops. Telemetry sensors are sampled at 1.0 Hz strictly when telemetry views are active.
+- **Layout Architecture:** Centered 104-column grid (or up to 132 for Fan) with dim horizontal dividers, fixed-column alignment, and zero clipped text across all terminal sizes (80x24 minimum).
+- **Rendering Architecture:** 100% event-driven; redraws occur exclusively on user input, terminal resize, or DBus/theme state events. No fixed-FPS game loops. Telemetry sensors are sampled at 1.0 Hz strictly when telemetry views are active.
 - **Protocol:** System DBus async proxies (`xyz.ljones.Asusd`, `org.supergfxctl.Daemon`) plus native sysfs/hwmon telemetry. No background daemons or shell forks during runtime.
 
 ---
 
 ## Target Platforms & Compatibility
 
-- **Primary Validation:** ASUS TUF Gaming F16 (FX608JH) running CachyOS Linux (x86-64-v3, BORE kernel).
+- **Primary Validation:** ASUS TUF Gaming F16 (FX608JH) running CachyOS Linux (x86-64-v3, BORE kernel, Sway on Wayland).
 - **Supported Daemon Versions:**
   - `asusd` v6.5.0+ (interface `xyz.ljones.*`)
   - `supergfxd` v5.2.7+ (interface `org.supergfxctl.Daemon`)
@@ -30,36 +31,42 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly interfa
 ## Features
 
 ### 1. Dash (Tab 1)
-- Clean read-only system telemetry: cleaned CPU name, RTX 5050 dGPU usage/temp/fan (or "Idle" if suspended), RAM usage in GiB, and 60-second Unicode temperature sparklines.
-- Battery summary: percentage, charge limit, health, and clean power state.
+- Unified grid rows for Processor, Graphics, Memory, and Battery with identical column alignment across metrics.
+- RTX 5050 dGPU usage/temp/fan, displaying dim "Idle" when suspended or at 0% without rendering empty broken bars.
+- Battery summary: percentage, current power draw in watts (e.g. `18.4 W`), tick mark (`╵`/`╷`) at charge threshold, and charging state.
+- Full-width dual-line Braille temperature chart (last 2 minutes) for CPU and GPU with a linear 30-100°C axis.
 - Quick profile cycling shortcut (`p`).
 
 ### 2. Power (Tab 2)
 - Platform profile selector: Quiet, Balanced, Performance.
-- Merged AC and Battery binding profiles (`When plugged in: ‹...›`, `On battery: ‹...›` with "Off" option).
-- Battery charge limit slider (`━━━━━────  60%`, 20% to 100% in 5% increments).
-- One-shot full charge override action to temporarily charge to 100% for travel.
-- Real battery health calculation and dynamic cycle count display (hidden if unpopulated).
+- Automatic profile bindings with "Switch automatically" subheading (`When plugged in: ‹...›`, `On battery: ‹...›`).
+- Charge limit slider with tick marks at 60% and 80% (`40 ━━━━━━━━╷───────╷─────── 100   60%`) and battery lifespan advice.
+- One-shot full charge override action row (`[ Start ↵ ]`) to temporarily charge to 100% for travel.
+- Dedicated read-only Status subsection (Health, Cycles, Discharge/Rate) automatically bypassed by j/k navigation.
 
 ### 3. Fan (Tab 3)
-- Clean header: `Fan ‹ CPU ›   Preset ‹ Balanced ›   Custom ● Off/On`.
-- Strictly linear x (30-100°C) and y (0-100%) axes with evenly spaced labels.
-- Braille fan curve passing exactly through the 8 hardware points.
-- Highlighted selected point marker, dim unselected markers, and live operating point crosshair.
+- Clean header: `Fan ‹ CPU ›  f    Preset ‹ Balanced ›  s    Custom curve ● On  c`.
+- Height 17 (`4k+1`) linear y-axis with 0%, 25%, 50%, 75%, 100% landing on exact character rows.
+- Linear 30°C to 100°C x-axis tick marks and labels placed using the exact same mathematical formula as point markers: `col = plot_x + ((temp - 30.0) / 70.0 * (plot_w - 1)).round()`.
+- Curve points rendered with `●` markers, active point highlighted, and live operating point indicated with `◆`.
+- Right-hand calibration table with right-aligned numeric columns and `▌` gutter marker.
 - Monotonic non-decreasing safety validation and minimum 30% PWM thermal clamp at >= 80°C.
 
 ### 4. RGB (Tab 4)
-- Backlight brightness slider (Off, Low, Medium, High).
-- Contextual control filtering: only controls supported by the active mode are shown (hides animation speed, direction, and secondary color when in Static mode).
-- Interactive 24-bit RGB/HSV color picker modal (`c`) with half-block hue strip and live swatch preview.
-- Hardware power states folded into a single compact line (Boot, Awake, Sleep, Shutdown).
-- Bottom contextual hint line explaining selected field or effect.
+- 4-state segmented brightness control: `Off · Low · Med · High`.
+- Contextual lighting controls: 18 effect modes including Static, Breathe, Color Cycle, Rainbow Wave, Audio Pulse, Voice Pulse, Ambient Screen Sync (Wayland grim), and Dynamic Theme.
+- Dynamic Theme hot reloading: monitors `~/.local/state/theme/colors.sh` on each tick and syncs rising accent colors (Void purple `#bb9af7`, Scaryforest teal `#77beb4`, Gruvbox `#ebdbb2`, Catppuccin `#f5c2e7`, Nord `#88c0d0`).
+- Color selection: Preset picker, custom hex with live `██` block preview, and direct hex entry modal (`#`).
+- Tinted R, G, B channel sliders with high-contrast visible track.
+- Compact hardware power state badges: `Keep lit during: [● Boot] [● Awake] [○ Sleep] [○ Shutdown]`.
+- Interactive 24-bit RGB/HSV color picker modal (`c`).
 
 ### 5. System (Tab 5)
-- Consolidated single view combining Display, Graphics, and About information.
-- Display controls: Panel Overdrive (3ms toggle) and Auto-Brightness.
-- Graphics: Plain text GPU mode display with dynamic support detection.
-- About: System model, BIOS version, kernel version, active session (`Sway · Wayland`), display mode (`1920×1200 · 165 Hz`), and ROGTUI version.
+- Consolidated single view combining Display, Graphics, Diagnostics, and About information.
+- Display controls: Panel Overdrive (3ms toggle) and Screen Auto-Brightness.
+- Graphics: Clean read-only GPU mode display (`‹ Dedicated GPU (MUX) ›`) with reminder that mode changes take effect on next login.
+- Diagnostics action: `Export report [ Run ↵ ]` writes comprehensive markdown reports to `~/.local/state/rogtui/report-<timestamp>.md`.
+- About section: Model, Processor, Graphics, Memory, NVIDIA Driver version, OS, Session, Display mode, and ROGTUI version.
 
 ---
 
@@ -97,6 +104,25 @@ makepkg -si
 
 ---
 
+## Command Line Options
+
+```bash
+rogtui [OPTIONS] [COMMAND]
+
+Commands:
+  probe-modes       Sweep keyboard RGB modes 0-12 interactively to audit physical presets
+
+Options:
+  --check           Validate system support, daemons, and exit with diagnostic report
+  --mock            Run with simulated mock hardware (for testing without daemons)
+  --no-color        Disable ANSI color sequences (monochrome mode)
+  --ascii           Use pure ASCII box-drawing characters
+  -h, --help        Display help message
+  -v, -V, --version Display version information
+```
+
+---
+
 ## Keyboard Navigation
 
 | Key | Context | Description |
@@ -106,18 +132,25 @@ makepkg -si
 | `j` / `k` or `Up` / `Down` | List Views | Move selection up / down |
 | `h` / `l` or `Left` / `Right` | Controls | Decrease / increase value, toggle, or cycle options |
 | `Enter` / `Space` | Controls | Execute action, toggle state, or open color picker |
-| `c` | RGB | Open interactive 24-bit RGB/HSV color picker modal |
+| `c` | RGB / Fan | Open 24-bit RGB color picker (RGB) / toggle custom curve (Fan) |
+| `#` | RGB | Enter 6-digit hex color directly (e.g. `ff4080`) |
 | `p` | Global | Quick cycle active Platform Profile |
 | `w` | Fan / RGB | Apply and write staged configuration to hardware / BIOS |
 | `s` | Fan | Cycle fan presets (Quiet, Balanced, Performance) |
 | `f` | Fan | Toggle CPU / GPU fan curve selection |
-| `y` | System | Export full system diagnostics report to `~/rogtui-diagnostics.txt` |
+| `y` | System | Export full system diagnostics report to `~/.local/state/rogtui/` |
 | `?` | Global | Open / close keyboard shortcuts help overlay |
 | `q` / `Esc` | Global | Close overlay / cancel confirmation / exit |
 
 ---
 
 ## Troubleshooting
+
+### Compatibility Audit
+Run the built-in system check:
+```bash
+rogtui --check
+```
 
 ### Daemon Connection Failure
 If `rogtui` reports `Error: Unable to connect to system DBus services`:
@@ -147,4 +180,3 @@ rogtui --mock
 - [`docs/parity.md`](docs/parity.md): Full feature parity matrix comparing `rogtui` with ROG Control Center (`rog-control-center`).
 - [`docs/keyboard-probe.md`](docs/keyboard-probe.md): Hardware verification and interactive probe results for TUF keyboard LED modes.
 - [`docs/endpoints.md`](docs/endpoints.md): Complete mapping of all discovered DBus properties, methods, and sysfs paths to their UI counterparts.
-- [`docs/dbus-introspection.txt`](docs/dbus-introspection.txt): Introspection dump of `xyz.ljones.Asusd` and `org.supergfxctl.Daemon`.

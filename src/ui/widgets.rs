@@ -24,15 +24,17 @@ pub fn panel_block<'a>(title: impl Into<Span<'a>>, focused: bool, theme: &Theme)
 }
 
 pub fn section_rule(title: &str, width: usize, theme: &Theme) -> Line<'static> {
+    let inner_w = width.saturating_sub(4);
     let prefix = format!("── {title} ");
     let prefix_len = prefix.chars().count();
-    let fill = if width > prefix_len + 2 {
-        "─".repeat(width.saturating_sub(prefix_len))
+    let fill = if inner_w > prefix_len {
+        "─".repeat(inner_w.saturating_sub(prefix_len))
     } else {
         "──".to_string()
     };
     Line::from(vec![
-        Span::styled(format!("── {title} "), Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(prefix, Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
         Span::styled(fill, Style::default().fg(Color::Rgb(70, 75, 85))),
     ])
 }
@@ -90,6 +92,80 @@ pub fn toggle_widget(enabled: bool, is_selected: bool, theme: &Theme) -> Vec<Spa
     }
 }
 
+pub fn segmented_control(
+    options: &[&str],
+    selected_idx: usize,
+    is_row_selected: bool,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (i, &opt) in options.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::default().fg(theme.dim)));
+        }
+        if i == selected_idx {
+            if is_row_selected {
+                spans.push(Span::styled(
+                    format!("[{opt}]"),
+                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                ));
+            } else {
+                spans.push(Span::styled(
+                    opt.to_string(),
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                ));
+            }
+        } else {
+            spans.push(Span::styled(
+                opt.to_string(),
+                Style::default().fg(theme.dim),
+            ));
+        }
+    }
+    spans
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn grid_row(
+    label: &str,
+    value_spans: Vec<Span<'static>>,
+    bar_spans: Vec<Span<'static>>,
+    extras_spans: Vec<Span<'static>>,
+    is_selected: bool,
+    label_w: usize,
+    val_w: usize,
+    theme: &Theme,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    if is_selected {
+        spans.push(Span::styled("▌ ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
+        spans.push(Span::styled(
+            format!("{label: <width$}", width = label_w),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("{label: <width$}", width = label_w),
+            Style::default().fg(theme.dim),
+        ));
+    }
+
+    let val_len: usize = value_spans.iter().map(|s| s.content.len()).sum();
+    spans.extend(value_spans);
+    if val_w > val_len {
+        spans.push(Span::raw(" ".repeat(val_w - val_len)));
+    } else {
+        spans.push(Span::raw(" "));
+    }
+
+    spans.extend(bar_spans);
+    spans.push(Span::raw("   "));
+    spans.extend(extras_spans);
+
+    Line::from(spans)
+}
+
 pub fn slider_widget(
     value: u32,
     min: u32,
@@ -99,14 +175,28 @@ pub fn slider_widget(
     is_selected: bool,
     theme: &Theme,
 ) -> Vec<Span<'static>> {
+    slider_widget_tinted(value, min, max, width, unit, is_selected, None, theme)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn slider_widget_tinted(
+    value: u32,
+    min: u32,
+    max: u32,
+    width: usize,
+    unit: &str,
+    is_selected: bool,
+    custom_tint: Option<Color>,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
     let clamped_val = value.clamp(min, max);
     let span_range = max.saturating_sub(min).max(1);
     let ratio = (clamped_val.saturating_sub(min) as f32 / span_range as f32).clamp(0.0, 1.0);
     let filled_count = (ratio * width as f32).round() as usize;
     let empty_count = width.saturating_sub(filled_count);
 
-    let filled_col = if is_selected { theme.accent } else { theme.dim };
-    let track_col = Color::Rgb(70, 75, 85);
+    let filled_col = custom_tint.unwrap_or(if is_selected { theme.accent } else { theme.dim });
+    let track_col = Theme::track_color();
 
     vec![
         Span::styled("━".repeat(filled_count), Style::default().fg(filled_col)),
@@ -114,6 +204,57 @@ pub fn slider_widget(
         Span::styled(
             format!("  {value}{unit}"),
             if is_selected {
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.dim)
+            },
+        ),
+    ]
+}
+
+pub fn charge_limit_slider(
+    value: u8,
+    width: usize,
+    is_selected: bool,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let min = 40.0;
+    let max = 100.0;
+    let val_f = (value as f32).clamp(min, max);
+    let ratio = (val_f - min) / (max - min);
+    let filled_count = (ratio * width as f32).round() as usize;
+
+    let mut bar_chars = Vec::new();
+    for i in 0..width {
+        let frac = i as f32 / width as f32;
+        let pos_val = min + frac * (max - min);
+        let is_tick = (pos_val - 60.0).abs() < 2.5 || (pos_val - 80.0).abs() < 2.5;
+        if i < filled_count {
+            if is_tick {
+                bar_chars.push('╵');
+            } else {
+                bar_chars.push('━');
+            }
+        } else if is_tick {
+            bar_chars.push('╷');
+        } else {
+            bar_chars.push('─');
+        }
+    }
+
+    let bar_str: String = bar_chars.into_iter().collect();
+    let filled_col = if is_selected { theme.accent } else { theme.dim };
+    let warn_100 = value == 100;
+
+    vec![
+        Span::styled("40 ", Style::default().fg(theme.dim)),
+        Span::styled(bar_str, Style::default().fg(filled_col)),
+        Span::styled(" 100   ", Style::default().fg(theme.dim)),
+        Span::styled(
+            format!("{value}%"),
+            if warn_100 {
+                Style::default().fg(theme.warn).add_modifier(Modifier::BOLD)
+            } else if is_selected {
                 Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(theme.dim)
@@ -203,7 +344,7 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, active_tab: ActiveTab, theme: &
         (ActiveTab::System, "System"),
     ];
 
-    let mut spans = vec![Span::raw(" ")];
+    let mut spans = Vec::new();
     for (tab, name) in tabs.iter() {
         let is_active = *tab == active_tab;
         if is_active {
@@ -226,6 +367,15 @@ pub fn render_tab_bar(f: &mut Frame, area: Rect, active_tab: ActiveTab, theme: &
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
+pub fn render_horizontal_rule(f: &mut Frame, area: Rect, _theme: &Theme) {
+    let width = area.width as usize;
+    let rule = Paragraph::new(Line::from(Span::styled(
+        "─".repeat(width),
+        Style::default().fg(Color::Rgb(65, 75, 85)),
+    )));
+    f.render_widget(rule, area);
+}
+
 pub fn render_hint_line(f: &mut Frame, area: Rect, hint_text: &str, theme: &Theme) {
     let line = Line::from(vec![
         Span::styled("  ", Style::default()),
@@ -235,6 +385,62 @@ pub fn render_hint_line(f: &mut Frame, area: Rect, hint_text: &str, theme: &Them
 }
 
 pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
+    let hint = app.get_active_hint();
+    if area.height >= 2 {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(area);
+        render_footer_two_rows(f, chunks[0], chunks[1], &hint, app, theme);
+    } else {
+        render_footer_two_rows(f, area, area, &hint, app, theme);
+    }
+}
+
+pub fn render_footer_two_rows<B: Backend>(
+    f: &mut Frame,
+    hint_area: Rect,
+    keys_area: Rect,
+    hint_text: &str,
+    app: &AppState<B>,
+    theme: &Theme,
+) {
+    let width = hint_area.width as usize;
+
+    // Row 1: Hint / Toast
+    let hint_line = if let Some((msg, is_error, _)) = &app.status_message {
+        if *is_error {
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("[!] {msg}"), Style::default().fg(theme.err).add_modifier(Modifier::BOLD)),
+            ])
+        } else {
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(format!("✓ {msg}"), Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)),
+            ])
+        }
+    } else if let Some((clamp_hint, _)) = &app.fan_clamp_hint {
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(clamp_hint.clone(), Style::default().fg(theme.warn)),
+        ])
+    } else {
+        let max_len = width.saturating_sub(6);
+        let clean_hint = if hint_text.chars().count() > max_len {
+            let truncated: String = hint_text.chars().take(max_len.saturating_sub(1)).collect();
+            format!("{truncated}…")
+        } else {
+            hint_text.to_string()
+        };
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(clean_hint, Style::default().fg(theme.dim)),
+        ])
+    };
+    f.render_widget(Paragraph::new(hint_line), hint_area);
+
+    // Row 2: Keys
     let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
         vec![
             ("j/k", "slider"),
@@ -247,85 +453,80 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
             ActiveTab::Dashboard => vec![
                 ("p", "cycle profile"),
                 ("Tab", "next tab"),
-                ("?", "help"),
-                ("q", "quit"),
             ],
-            ActiveTab::Power => vec![
-                ("j/k", "select"),
-                ("h/l", "adjust"),
-                ("Enter", "toggle"),
-                ("?", "help"),
-                ("q", "quit"),
-            ],
+            ActiveTab::Power => {
+                match app.power_selected_field {
+                    0..=2 => vec![("h/l", "cycle"), ("Space", "toggle")],
+                    3 => vec![("h/l", "adjust limit")],
+                    4 => vec![("Enter", "full charge")],
+                    _ => vec![],
+                }
+            }
             ActiveTab::FanCurves => vec![
                 ("h/l", "point"),
                 ("j/k", "speed"),
                 ("H/L", "temp"),
                 ("s", "preset"),
+                ("f", "fan"),
+                ("c", "custom"),
                 ("w", "apply"),
-                ("?", "help"),
             ],
-            ActiveTab::Aura => vec![
-                ("j/k", "select"),
-                ("h/l", "mode / color"),
-                ("c", "color picker"),
-                ("w", "save"),
-                ("?", "help"),
-            ],
-            ActiveTab::System => vec![
-                ("j/k", "select"),
-                ("Enter", "toggle / switch"),
-                ("y", "export report"),
-                ("?", "help"),
-                ("q", "quit"),
-            ],
+            ActiveTab::Aura => {
+                match app.aura_selected_field {
+                    0 => vec![("h/l", "brightness")],
+                    1 => vec![("h/l", "mode")],
+                    2 => vec![("h/l", "preset"), ("c", "picker"), ("#", "hex")],
+                    3..=5 => vec![("h/l", "adjust channel")],
+                    6 => vec![("h/l", "secondary preset")],
+                    7 => vec![("h/l", "speed")],
+                    8 => vec![("h/l", "direction")],
+                    9..=12 => vec![("Space", "toggle state")],
+                    _ => vec![("h/l", "adjust")],
+                }
+            }
+            ActiveTab::System => {
+                match app.system_selected_row {
+                    0 | 1 => vec![("Space", "toggle")],
+                    2 => vec![],
+                    3 => vec![("Enter", "export report")],
+                    _ => vec![],
+                }
+            }
         }
     };
 
-    let toast_span = if let Some((msg, is_error, _)) = &app.status_message {
-        if *is_error {
-            Span::styled(format!(" [!] {msg} "), Style::default().bg(theme.err).fg(Color::White).add_modifier(Modifier::BOLD))
-        } else {
-            Span::styled(format!(" {msg} "), Style::default().bg(theme.ok).fg(Color::Black).add_modifier(Modifier::BOLD))
+    let mut left_spans = vec![Span::raw("  ")];
+    let mut left_len = 2;
+    for (k, a) in keybinds {
+        let entry_len = k.len() + a.len() + 3;
+        if left_len + entry_len < width.saturating_sub(18) {
+            left_spans.push(Span::styled(k, Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
+            left_spans.push(Span::raw(" "));
+            left_spans.push(Span::styled(format!("{a}  "), Style::default().fg(theme.dim)));
+            left_len += entry_len;
         }
-    } else if let Some((hint, _)) = &app.fan_clamp_hint {
-        Span::styled(format!(" {hint} "), Style::default().bg(theme.warn).fg(Color::Black))
+    }
+
+    let right_spans = vec![
+        Span::styled("?", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled("help  ", Style::default().fg(theme.dim)),
+        Span::styled("q", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled("quit  ", Style::default().fg(theme.dim)),
+    ];
+    let right_len = 16;
+
+    let mut total_spans = left_spans;
+    if width > left_len + right_len {
+        let pad = width - left_len - right_len;
+        total_spans.push(Span::raw(" ".repeat(pad)));
     } else {
-        Span::raw("")
-    };
-
-    let toast_len = toast_span.content.len();
-    let total_width = area.width as usize;
-
-    let mut spans = vec![Span::raw(" ")];
-    let mut current_len = 1 + toast_len + 2;
-
-    for (key, desc) in keybinds.iter().take(5) {
-        let entry_len = key.len() + desc.len() + 3;
-        if current_len + entry_len < total_width {
-            spans.push(Span::styled(
-                (*key).to_string(),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                format!("{desc}  "),
-                Style::default().fg(theme.dim),
-            ));
-            current_len += entry_len;
-        } else {
-            break;
-        }
+        total_spans.push(Span::raw(" "));
     }
+    total_spans.extend(right_spans);
 
-    let left_len: usize = spans.iter().map(|s| s.content.len()).sum();
-    if total_width > left_len + toast_len {
-        let padding = total_width - left_len - toast_len;
-        spans.push(Span::raw(" ".repeat(padding)));
-        spans.push(toast_span);
-    }
-
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    f.render_widget(Paragraph::new(Line::from(total_spans)), keys_area);
 }
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

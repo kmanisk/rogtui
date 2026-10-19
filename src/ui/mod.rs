@@ -17,7 +17,8 @@ use ratatui::{
 use crate::app::{ActiveTab, AppState};
 use crate::backend::Backend;
 use crate::ui::widgets::{
-    panel_block, render_confirm_modal, render_footer, render_help_overlay, render_tab_bar,
+    panel_block, render_confirm_modal, render_footer_two_rows, render_help_overlay,
+    render_horizontal_rule, render_tab_bar,
 };
 
 pub fn render_ui<B: Backend>(f: &mut Frame, app: &AppState<B>) {
@@ -29,27 +30,57 @@ pub fn render_ui<B: Backend>(f: &mut Frame, app: &AppState<B>) {
         return;
     }
 
-    // 3 vertical chunks: Tab bar (1), Tab content (min), Footer (1)
+    // Determine centered content column
+    // Max width 104 columns (Fan may use up to 132 on wide screens).
+    let max_w = if app.current_tab == ActiveTab::FanCurves && size.width >= 132 {
+        132
+    } else {
+        104
+    };
+    let content_w = if size.width >= max_w {
+        max_w
+    } else {
+        size.width.saturating_sub(4)
+    };
+    let content_x = (size.width.saturating_sub(content_w)) / 2;
+
+    let content_rect = Rect::new(content_x, 0, content_w, size.height);
+
+    // Vertical rhythm:
+    // Row 0: empty (1)
+    // Row 1: tab bar (1)
+    // Row 2: dim horizontal rule (1)
+    // Row 3..N: tab content (Min 10)
+    // Row N+1: dim horizontal rule (1)
+    // Row N+2: hint line / toast (1)
+    // Row N+3: key hints (1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // First row is ONLY the tab bar
-            Constraint::Min(10),   // Content area
-            Constraint::Length(1), // Single-line footer
+            Constraint::Length(1), // Row 0: empty
+            Constraint::Length(1), // Row 1: tab bar
+            Constraint::Length(1), // Row 2: dim rule
+            Constraint::Min(10),   // Row 3..N: content
+            Constraint::Length(1), // Row N+1: dim rule
+            Constraint::Length(1), // Row N+2: hint / toast
+            Constraint::Length(1), // Row N+3: context keys
         ])
-        .split(size);
+        .split(content_rect);
 
-    render_tab_bar(f, chunks[0], app.current_tab, &app.theme);
+    render_tab_bar(f, chunks[1], app.current_tab, &app.theme);
+    render_horizontal_rule(f, chunks[2], &app.theme);
 
     match app.current_tab {
-        ActiveTab::Dashboard => dashboard::render_dashboard(f, app, chunks[1]),
-        ActiveTab::Power => power::render_power(f, app, chunks[1]),
-        ActiveTab::FanCurves => fancurve::render_fancurve(f, app, chunks[1]),
-        ActiveTab::Aura => aura::render_aura(f, app, chunks[1]),
-        ActiveTab::System => system::render_system(f, app, chunks[1]),
+        ActiveTab::Dashboard => dashboard::render_dashboard(f, app, chunks[3]),
+        ActiveTab::Power => power::render_power(f, app, chunks[3]),
+        ActiveTab::FanCurves => fancurve::render_fancurve(f, app, chunks[3]),
+        ActiveTab::Aura => aura::render_aura(f, app, chunks[3]),
+        ActiveTab::System => system::render_system(f, app, chunks[3]),
     }
 
-    render_footer(f, chunks[2], app, &app.theme);
+    render_horizontal_rule(f, chunks[4], &app.theme);
+    let hint = app.get_active_hint();
+    render_footer_two_rows(f, chunks[5], chunks[6], &hint, app, &app.theme);
 
     if app.show_help {
         render_help_overlay(f, size, app.current_tab, &app.theme);

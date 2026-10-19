@@ -469,6 +469,13 @@ pub struct AppState<B: Backend> {
     pub is_logging_metrics: bool,
     pub metrics_log_path: std::path::PathBuf,
     pub metrics_logged_count: usize,
+
+    // Polish additions
+    pub saved_software_effect: Option<SoftwareEffect>,
+    pub user_custom_color: bool,
+    pub color_cycle_progress: f32,
+    pub is_full_charge_active: bool,
+    pub last_theme_mtime: Option<std::time::SystemTime>,
 }
 
 impl<B: Backend> AppState<B> {
@@ -603,6 +610,11 @@ impl<B: Backend> AppState<B> {
                 std::path::PathBuf::from("/tmp/rogtui-metrics.csv")
             },
             metrics_logged_count: 0,
+            saved_software_effect: None,
+            user_custom_color: false,
+            color_cycle_progress: 0.0,
+            is_full_charge_active: false,
+            last_theme_mtime: None,
         })
     }
 
@@ -624,6 +636,97 @@ impl<B: Backend> AppState<B> {
 
     pub fn picker_current_color(&self) -> RgbColor {
         RgbColor::from_hsv(self.picker_hue, self.picker_sat, self.picker_val)
+    }
+
+    pub fn get_active_hint(&self) -> String {
+        match self.current_tab {
+            ActiveTab::Dashboard => {
+                "Platform profiles balance CPU/GPU wattage, acoustic limits, and battery life.".to_string()
+            }
+            ActiveTab::Power => {
+                match self.power_selected_field {
+                    0 => "Sets system performance, thermal thresholds, and fan curves.".to_string(),
+                    1 => "Applies when the charger is connected or removed.".to_string(),
+                    2 => "Applies when the charger is connected or removed.".to_string(),
+                    3 => if self.charge_limit == 100 {
+                        "Warning: 100% maximum charge accelerates battery wear.".to_string()
+                    } else {
+                        "80% or lower extends battery lifespan by reducing cell degradation.".to_string()
+                    },
+                    4 => if self.is_full_charge_active {
+                        "Active, ends when unplugged.".to_string()
+                    } else {
+                        "Temporarily charge to 100% for travel; resets automatically on disconnect.".to_string()
+                    },
+                    _ => String::new(),
+                }
+            }
+            ActiveTab::FanCurves => {
+                "Curves must be non-decreasing. Fan speed must be at least 30% above 80°C.".to_string()
+            }
+            ActiveTab::Aura => {
+                match self.aura_selected_field {
+                    0 => "Adjusts keyboard LED backlight intensity (Off, Low, Med, High).".to_string(),
+                    1 => match crate::ui::aura::get_current_mode_index(self) {
+                        0 => "Single solid illumination across all keyboard zones.",
+                        1 => "Sine-wave brightness breathing between primary and secondary colors.",
+                        2 => "Hardware-timed spectrum wave traversing the keyboard matrix.",
+                        3 => "Periodic quick flash pulses.",
+                        4 => "Smooth continuous 360° spectrum sweep across the keyboard.",
+                        5 => "Sequential smooth crossfade transitions through 7 primary colors.",
+                        6 => "Organic fireplace flame simulation with shifting amber and red embers.",
+                        7 => "Smooth atmospheric drift between soft cyan, sky blue, and cloud white.",
+                        8 => "Synchronizes keyboard lighting to active desktop theme from colors.sh.",
+                        9 => "High-contrast blinking pulse.",
+                        10 => "Speech reactive illumination via internal laptop microphone.",
+                        11 => "Real-time system audio playback reactive pulse.",
+                        12 => "Multi-harmonic frequency spectrum lighting.",
+                        13 => "Wayland display ambient color sync via grim.",
+                        14 => "Thermal color gradient reflecting CPU and GPU temperatures.",
+                        15 => "Reflects active GPU operating mode in color.",
+                        16 => "Visual state-of-charge and charging indicator.",
+                        17 => "Visual workload percentage monitor.",
+                        _ => "Lighting mode.",
+                    }.to_string(),
+                    2 => "Primary keyboard backlight color. Press c for 24-bit picker, # to enter hex.".to_string(),
+                    3 => "Adjusts Red color channel (0..255).".to_string(),
+                    4 => "Adjusts Green color channel (0..255).".to_string(),
+                    5 => "Adjusts Blue color channel (0..255).".to_string(),
+                    6 => "Secondary breathing color.".to_string(),
+                    7 => "Animation speed (Low, Med, High).".to_string(),
+                    8 => "Animation traversal direction (Left, Right).".to_string(),
+                    9 => "Keep keyboard lit during system boot sequence.".to_string(),
+                    10 => "Keep keyboard lit while system is running.".to_string(),
+                    11 => "Keep keyboard lit during system suspend.".to_string(),
+                    12 => "Keep keyboard lit during system shutdown.".to_string(),
+                    _ => String::new(),
+                }
+            }
+            ActiveTab::System => {
+                match self.system_selected_row {
+                    0 => "Faster pixel response; can cause ghosting in some content.".to_string(),
+                    1 => "Adjusts screen brightness to ambient room light.".to_string(),
+                    2 => "Hardware GPU operating mode configured by supergfxd.".to_string(),
+                    3 => "Exports full hardware and system diagnostics to ~/rogtui-diagnostics.txt.".to_string(),
+                    _ => String::new(),
+                }
+            }
+        }
+    }
+
+    pub fn check_and_reload_system_theme(&mut self) -> bool {
+        let Ok(home) = std::env::var("HOME") else { return false; };
+        let path = std::path::PathBuf::from(home).join(".local/state/theme/colors.sh");
+        let Ok(meta) = std::fs::metadata(&path) else { return false; };
+        let Ok(mtime) = meta.modified() else { return false; };
+
+        if self.last_theme_mtime != Some(mtime) {
+            self.last_theme_mtime = Some(mtime);
+            let (_name, theme_rgb) = Theme::read_system_theme();
+            self.theme.accent = ratatui::style::Color::Rgb(theme_rgb.r, theme_rgb.g, theme_rgb.b);
+            return true;
+        }
+        false
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>, is_error: bool) {
@@ -817,7 +920,7 @@ impl<B: Backend> AppState<B> {
         RgbColor::from_hsv(self.rainbow_wave_hue, 100.0, 100.0)
     }
 
-    /// Compute the next step for Color Cycle (7 primary colors).
+    /// Compute the next step for Color Cycle (7 primary colors) with smooth crossfade and speed control.
     pub fn compute_color_cycle_color(&mut self) -> RgbColor {
         const CYCLE_COLORS: [RgbColor; 7] = [
             RgbColor::new(255, 0, 0),     // Red
@@ -828,13 +931,31 @@ impl<B: Backend> AppState<B> {
             RgbColor::new(0, 0, 255),     // Blue
             RgbColor::new(255, 0, 255),   // Magenta
         ];
-        let step = if self.aura_data.direction.eq_ignore_ascii_case("left") {
-            6
-        } else {
-            1
+
+        let step = match self.aura_data.speed.to_ascii_lowercase().as_str() {
+            "low" => 0.02,
+            "high" => 0.10,
+            _ => 0.05,
         };
-        self.color_cycle_idx = (self.color_cycle_idx + step) % CYCLE_COLORS.len();
-        CYCLE_COLORS[self.color_cycle_idx]
+
+        if self.aura_data.direction.eq_ignore_ascii_case("left") {
+            self.color_cycle_progress = (self.color_cycle_progress - step + 7.0) % 7.0;
+        } else {
+            self.color_cycle_progress = (self.color_cycle_progress + step) % 7.0;
+        }
+
+        let idx1 = self.color_cycle_progress.floor() as usize % 7;
+        let idx2 = (idx1 + 1) % 7;
+        let frac = self.color_cycle_progress.fract();
+
+        let c1 = CYCLE_COLORS[idx1];
+        let c2 = CYCLE_COLORS[idx2];
+
+        RgbColor::new(
+            (c1.r as f32 * (1.0 - frac) + c2.r as f32 * frac).round() as u8,
+            (c1.g as f32 * (1.0 - frac) + c2.g as f32 * frac).round() as u8,
+            (c1.b as f32 * (1.0 - frac) + c2.b as f32 * frac).round() as u8,
+        )
     }
 
     /// Compute warm flickering fireplace ember color.
@@ -902,18 +1023,35 @@ impl<B: Backend> AppState<B> {
     }
 
     /// Voice Pulse: Speech reactive using clean microphone (ghelper-audio) via non-blocking worker.
-    /// G-Helper AGC & cubic curve: lights up brightly when speaking, rests at 15% when silent.
+    /// Priority: Defaults to active system desktop theme color; overridden by user-specified custom color.
+    /// At brightness 1 (Low), pulses between 0 (off) and 1 (lit) on speech sound.
     pub fn compute_voice_pulse_color(&mut self) -> RgbColor {
         self.audio_service.start("@DEFAULT_SOURCE@");
         let level = self.audio_service.get_mic_level();
         self.mic_level = level;
-        let c = if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
-            RgbColor::new(0, 255, 255)
+
+        let c = if !self.user_custom_color
+            || (self.aura_data.color1.r == 0
+                && self.aura_data.color1.g == 0
+                && self.aura_data.color1.b == 0)
+        {
+            crate::ui::theme::Theme::read_system_theme().1
         } else {
             self.aura_data.color1
         };
 
-        if level == 0 {
+        if self.aura_brightness == 1 {
+            if level == 0 {
+                RgbColor::new(0, 0, 0)
+            } else {
+                let mult = (level as f32 / 100.0).clamp(0.4, 1.0);
+                RgbColor::new(
+                    (c.r as f32 * mult) as u8,
+                    (c.g as f32 * mult) as u8,
+                    (c.b as f32 * mult) as u8,
+                )
+            }
+        } else if level == 0 {
             // Resting ambient glow
             RgbColor::new(
                 (c.r as f32 * 0.15) as u8,
@@ -931,18 +1069,35 @@ impl<B: Backend> AppState<B> {
     }
 
     /// Audio Pulse: Sound output reactive visualizer via non-blocking worker.
-    /// Pulses keyboard illumination with music beat drops and audio playback intensity.
+    /// Priority: Defaults to active system desktop theme color; overridden by user-specified custom color.
+    /// At brightness 1 (Low), pulses between 0 (off) and 1 (lit) on beat drops.
     pub fn compute_audio_pulse_color(&mut self) -> RgbColor {
         self.audio_service.start("@DEFAULT_MONITOR@");
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
-        let c = if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
-            RgbColor::new(0, 255, 255)
+
+        let c = if !self.user_custom_color
+            || (self.aura_data.color1.r == 0
+                && self.aura_data.color1.g == 0
+                && self.aura_data.color1.b == 0)
+        {
+            crate::ui::theme::Theme::read_system_theme().1
         } else {
             self.aura_data.color1
         };
 
-        if level == 0 {
+        if self.aura_brightness == 1 {
+            if level == 0 {
+                RgbColor::new(0, 0, 0)
+            } else {
+                let mult = (level as f32 / 100.0).clamp(0.4, 1.0);
+                RgbColor::new(
+                    (c.r as f32 * mult) as u8,
+                    (c.g as f32 * mult) as u8,
+                    (c.b as f32 * mult) as u8,
+                )
+            }
+        } else if level == 0 {
             RgbColor::new(
                 (c.r as f32 * 0.12) as u8,
                 (c.g as f32 * 0.12) as u8,

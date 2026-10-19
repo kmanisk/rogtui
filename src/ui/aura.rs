@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
@@ -10,8 +10,8 @@ use crate::app::AppState;
 use crate::backend::Backend;
 use crate::backend::types::{RgbColor, SoftwareEffect};
 use crate::ui::widgets::{
-    choice_widget, label_value_row, panel_block, render_hint_line, section_rule, slider_widget,
-    toggle_widget,
+    choice_widget, label_value_row, panel_block, section_rule, segmented_control,
+    slider_widget_tinted,
 };
 
 pub fn get_color_presets() -> [(&'static str, RgbColor); 10] {
@@ -102,47 +102,22 @@ pub fn is_aura_field_supported<B: Backend>(app: &AppState<B>, field: usize) -> b
 pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let theme = &app.theme;
     let is_off = app.aura_brightness == 0;
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1), // Top spacing
-            Constraint::Min(12),   // Aura controls list
-            Constraint::Length(1), // Bottom hint line
-        ])
-        .split(area);
-
-    let content_area = chunks[1];
-    let width = content_area.width as usize;
+    let width = area.width as usize;
     let label_width = 18;
 
     let mut lines = Vec::new();
+    lines.push(Line::from(""));
 
     // -------------------------------------------------------------------------
     // 1. Lighting Controls
     // -------------------------------------------------------------------------
-    lines.push(section_rule("Keyboard Lighting", width.saturating_sub(4), theme));
+    lines.push(section_rule("Keyboard Lighting", width, theme));
     lines.push(Line::from(""));
 
-    // Row 0: Brightness
-    let b_label = match app.aura_brightness {
-        0 => "Off",
-        1 => "Low",
-        2 => "Medium",
-        _ => "High",
-    };
-    let b_slider = slider_widget(
-        app.aura_brightness,
-        0,
-        3,
-        12,
-        "",
-        app.aura_selected_field == 0,
-        theme,
-    );
-    let mut b_spans = b_slider;
-    b_spans.push(Span::raw("  "));
-    b_spans.push(Span::styled(format!("({b_label})"), Style::default().fg(theme.dim)));
+    // Row 0: Brightness (Segmented control: Off · Low · Med · High)
+    let brightness_opts = ["Off", "Low", "Med", "High"];
+    let b_idx = app.aura_brightness.clamp(0, 3) as usize;
+    let b_spans = segmented_control(&brightness_opts, b_idx, app.aura_selected_field == 0, theme);
     lines.push(label_value_row("Brightness", b_spans, app.aura_selected_field == 0, label_width, theme));
 
     // Row 1: Mode
@@ -175,27 +150,62 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         let preset_name = get_active_preset_name(col);
         let swatch_color = Color::Rgb(col.r, col.g, col.b);
 
-        let mut col_spans = vec![
-            Span::styled("████  ", Style::default().fg(swatch_color)),
-            Span::styled(col.to_hex(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
-            Span::raw("   "),
+        // Row: Preset
+        let preset_spans = choice_widget(preset_name, app.aura_selected_field == 2, theme);
+        lines.push(label_value_row("Preset", preset_spans, app.aura_selected_field == 2, label_width, theme));
+
+        // Row: Custom hex with 2-char block preview
+        let hex_str = if let Some(buf) = &app.hex_input_buffer {
+            format!("#{buf}_")
+        } else {
+            col.to_hex()
+        };
+        let hex_spans = vec![
+            Span::styled(format!("{hex_str: <9}"), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+            Span::styled("  ██  ", Style::default().fg(swatch_color)),
+            Span::styled("c", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(" picker  ", Style::default().fg(theme.dim)),
+            Span::styled("#", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+            Span::styled(" hex", Style::default().fg(theme.dim)),
         ];
-        col_spans.extend(choice_widget(preset_name, app.aura_selected_field == 2, theme));
-        col_spans.push(Span::raw("   "));
-        col_spans.push(Span::styled("c", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
-        col_spans.push(Span::styled(" picker", Style::default().fg(theme.dim)));
+        lines.push(label_value_row("Custom hex", hex_spans, false, label_width, theme));
 
-        lines.push(label_value_row("Color", col_spans, app.aura_selected_field == 2, label_width, theme));
+        // R / G / B sliders tinted with respective colors
+        let r_slider = slider_widget_tinted(
+            col.r as u32,
+            0,
+            255,
+            16,
+            "",
+            app.aura_selected_field == 3,
+            Some(Color::Rgb(220, 80, 80)),
+            theme,
+        );
+        lines.push(label_value_row("R", r_slider, app.aura_selected_field == 3, label_width, theme));
 
-        // R / G / B sliders
-        let r_slider = slider_widget(col.r as u32, 0, 255, 16, "", app.aura_selected_field == 3, theme);
-        lines.push(label_value_row("  Red", r_slider, app.aura_selected_field == 3, label_width, theme));
+        let g_slider = slider_widget_tinted(
+            col.g as u32,
+            0,
+            255,
+            16,
+            "",
+            app.aura_selected_field == 4,
+            Some(Color::Rgb(80, 200, 80)),
+            theme,
+        );
+        lines.push(label_value_row("G", g_slider, app.aura_selected_field == 4, label_width, theme));
 
-        let g_slider = slider_widget(col.g as u32, 0, 255, 16, "", app.aura_selected_field == 4, theme);
-        lines.push(label_value_row("  Green", g_slider, app.aura_selected_field == 4, label_width, theme));
-
-        let b_slider = slider_widget(col.b as u32, 0, 255, 16, "", app.aura_selected_field == 5, theme);
-        lines.push(label_value_row("  Blue", b_slider, app.aura_selected_field == 5, label_width, theme));
+        let b_slider = slider_widget_tinted(
+            col.b as u32,
+            0,
+            255,
+            16,
+            "",
+            app.aura_selected_field == 5,
+            Some(Color::Rgb(80, 130, 240)),
+            theme,
+        );
+        lines.push(label_value_row("B", b_slider, app.aura_selected_field == 5, label_width, theme));
     }
 
     // Secondary Color if supported (e.g. Breathe)
@@ -203,7 +213,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         let col2 = app.aura_data.color2;
         let swatch_color2 = Color::Rgb(col2.r, col2.g, col2.b);
         let mut col2_spans = vec![
-            Span::styled("████  ", Style::default().fg(swatch_color2)),
+            Span::styled("██  ", Style::default().fg(swatch_color2)),
             Span::styled(col2.to_hex(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
             Span::raw("   "),
         ];
@@ -215,7 +225,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     // 2. Power States
     // -------------------------------------------------------------------------
     lines.push(Line::from(""));
-    lines.push(section_rule("Hardware Power States", width.saturating_sub(4), theme));
+    lines.push(section_rule("Hardware Power States", width, theme));
     lines.push(Line::from(""));
 
     let is_boot_sel = app.aura_selected_field == 9;
@@ -223,72 +233,33 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let is_sleep_sel = app.aura_selected_field == 11;
     let is_shut_sel = app.aura_selected_field == 12;
 
-    let mut power_spans = vec![
-        Span::styled("Boot ", if is_boot_sel { Style::default().fg(theme.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.dim) }),
-    ];
-    power_spans.extend(toggle_widget(app.aura_power.boot, is_boot_sel, theme));
-    power_spans.push(Span::raw("     "));
+    let format_power_badge = |label: &str, on: bool, sel: bool| -> Vec<Span<'static>> {
+        let icon = if on { "● " } else { "○ " };
+        let icon_col = if on { theme.ok } else { theme.dim };
+        let text_style = if sel {
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.dim)
+        };
+        let bracket_col = if sel { theme.accent } else { Color::Rgb(70, 75, 85) };
+        vec![
+            Span::styled("[", Style::default().fg(bracket_col)),
+            Span::styled(icon, Style::default().fg(icon_col)),
+            Span::styled(label.to_string(), text_style),
+            Span::styled("]   ", Style::default().fg(bracket_col)),
+        ]
+    };
 
-    power_spans.push(Span::styled("Awake ", if is_awake_sel { Style::default().fg(theme.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.dim) }));
-    power_spans.extend(toggle_widget(app.aura_power.awake, is_awake_sel, theme));
-    power_spans.push(Span::raw("     "));
-
-    power_spans.push(Span::styled("Sleep ", if is_sleep_sel { Style::default().fg(theme.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.dim) }));
-    power_spans.extend(toggle_widget(app.aura_power.sleep, is_sleep_sel, theme));
-    power_spans.push(Span::raw("     "));
-
-    power_spans.push(Span::styled("Shutdown ", if is_shut_sel { Style::default().fg(theme.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.dim) }));
-    power_spans.extend(toggle_widget(app.aura_power.shutdown, is_shut_sel, theme));
+    let mut power_spans = Vec::new();
+    power_spans.extend(format_power_badge("Boot", app.aura_power.boot, is_boot_sel));
+    power_spans.extend(format_power_badge("Awake", app.aura_power.awake, is_awake_sel));
+    power_spans.extend(format_power_badge("Sleep", app.aura_power.sleep, is_sleep_sel));
+    power_spans.extend(format_power_badge("Shutdown", app.aura_power.shutdown, is_shut_sel));
 
     let any_power_sel = is_boot_sel || is_awake_sel || is_sleep_sel || is_shut_sel;
-    lines.push(label_value_row("Keep lit on", power_spans, any_power_sel, label_width, theme));
+    lines.push(label_value_row("Keep lit during", power_spans, any_power_sel, label_width, theme));
 
-    f.render_widget(Paragraph::new(lines), content_area);
-
-    // -------------------------------------------------------------------------
-    // Bottom Hint Line
-    // -------------------------------------------------------------------------
-    let hint = if is_off && app.aura_selected_field == 0 {
-        "Backlight is Off. Press 'l' or Right to increase brightness."
-    } else {
-        match app.aura_selected_field {
-            0 => "h/l: adjust backlight brightness (Off -> Low -> Med -> High)",
-            1 => match mode_idx {
-                0 => "Static: single solid illumination across all keyboard zones",
-                1 => "Breathe: sine-wave brightness breathing between primary and secondary colors",
-                2 => "Rainbow: native hardware rainbow wave traversing the keyboard matrix",
-                3 => "Pulse: quick periodic hardware flash pulses",
-                4 => "Rainbow Wave: continuous 360° spectrum sweep across the keyboard",
-                5 => "Color Cycle: sequential transitions through 7 primary colors",
-                6 => "Fire Flicker: organic fireplace flame simulation with shifting amber/red embers",
-                7 => "Clouds: smooth atmospheric drift between soft cyan, sky blue, and cloud white",
-                8 => "Theme Sync: dynamic palette sync with colors.sh and subtle breathing",
-                9 => "Strobe: high-contrast blinking pulse",
-                10 => "Voice Pulse: speech reactive via laptop internal microphone",
-                11 => "Audio Pulse: real-time system audio playback reactive pulse",
-                12 => "Audio Wave: dynamic multi-harmonic frequency spectrum lighting",
-                13 => "Ambient Screen Sync: G-Helper Wayland display sync via grim",
-                14 => "Heatmap: dynamic thermal color gradient from cool to hot",
-                15 => "GPU Mode: reflects active GPU operating mode in color",
-                16 => "Battery Status: visual state-of-charge and charging indicator",
-                17 => "CPU Load: visual workload percentage monitor",
-                _ => "h/l: cycle lighting mode",
-            },
-            2 => "h/l: cycle color preset   c: open 24-bit RGB Color Picker modal",
-            3 => "h/l: adjust Red channel (0..255)",
-            4 => "h/l: adjust Green channel (0..255)",
-            5 => "h/l: adjust Blue channel (0..255)",
-            6 => "h/l: cycle secondary color preset",
-            7 => "h/l: set animation speed (low / med / high)",
-            8 => "h/l: set animation direction (Left / Right)",
-            9 => "Space/Enter: toggle backlight on boot",
-            10 => "Space/Enter: toggle backlight when laptop is awake",
-            11 => "Space/Enter: toggle backlight during system suspend / sleep",
-            12 => "Space/Enter: toggle backlight during shutdown",
-            _ => "",
-        }
-    };
-    render_hint_line(f, chunks[2], hint, theme);
+    f.render_widget(Paragraph::new(lines), area);
 
     if app.show_color_picker_modal {
         render_color_picker_modal(f, app, area);

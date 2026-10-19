@@ -144,7 +144,52 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         return;
     }
 
-    // 2b. If advanced power modal is open, dismiss on Esc/Enter/a/q
+    // 2b. If hex input is active, process hex digits, backspace, Enter, Esc
+    if let Some(mut buf) = app.hex_input_buffer.take() {
+        match key.code {
+            KeyCode::Esc => {
+                app.hex_input_buffer = None;
+                app.set_status("Hex entry cancelled", false);
+            }
+            KeyCode::Enter => {
+                match RgbColor::from_hex(&buf) {
+                    Ok(col) => {
+                        let slot = if app.aura_selected_field == 6 { 2 } else { 1 };
+                        if slot == 2 {
+                            app.aura_data.color2 = col;
+                        } else {
+                            app.aura_data.color1 = col;
+                        }
+                        app.user_custom_color = true;
+                        if app.aura_mode == 0 && app.active_software_effect == SoftwareEffect::None {
+                            let _ = app.backend.write_volatile_rgb(col).await;
+                        } else {
+                            app.apply_software_effect().await;
+                        }
+                        app.set_status(format!("Set color to {}", col.to_hex()), false);
+                    }
+                    Err(e) => {
+                        app.set_status(format!("Invalid hex: {e}"), true);
+                    }
+                }
+                app.hex_input_buffer = None;
+            }
+            KeyCode::Backspace => {
+                buf.pop();
+                app.hex_input_buffer = Some(buf);
+            }
+            KeyCode::Char(c) if c.is_ascii_hexdigit() && buf.len() < 6 => {
+                buf.push(c);
+                app.hex_input_buffer = Some(buf);
+            }
+            _ => {
+                app.hex_input_buffer = Some(buf);
+            }
+        }
+        return;
+    }
+
+    // 2c. If advanced power modal is open, dismiss on Esc/Enter/a/q
     if app.show_advanced_power_modal {
         if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char('a') | KeyCode::Char('A') | KeyCode::Char('q') | KeyCode::Char(' ')) {
             app.show_advanced_power_modal = false;
@@ -275,8 +320,7 @@ async fn handle_dashboard<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
 }
 
 async fn handle_system<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
-    let can_switch_gpu = app.gpu_supported.len() > 1;
-    let max_rows = if can_switch_gpu { 3 } else { 2 };
+    let max_rows = 3;
 
     match key.code {
         KeyCode::Down | KeyCode::Char('j') => {
@@ -285,34 +329,9 @@ async fn handle_system<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
         KeyCode::Up | KeyCode::Char('k') => {
             app.system_selected_row = (app.system_selected_row + max_rows - 1) % max_rows;
         }
-        KeyCode::Left | KeyCode::Char('h') => {
-            if app.system_selected_row == 2 && can_switch_gpu {
-                if app.gpu_selected_idx > 0 {
-                    app.gpu_selected_idx -= 1;
-                } else {
-                    app.gpu_selected_idx = app.gpu_supported.len() - 1;
-                }
-            } else {
-                toggle_system_row(app).await;
-            }
-        }
-        KeyCode::Right | KeyCode::Char('l') => {
-            if app.system_selected_row == 2 && can_switch_gpu {
-                app.gpu_selected_idx = (app.gpu_selected_idx + 1) % app.gpu_supported.len();
-            } else {
-                toggle_system_row(app).await;
-            }
-        }
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            if app.system_selected_row == 2 && can_switch_gpu {
-                if let Some(&target_mode) = app.gpu_supported.get(app.gpu_selected_idx) {
-                    if target_mode != app.gpu_mode {
-                        app.confirm_modal = Some((
-                            format!("Switch GPU mode to {}? Requires reboot/logout.", target_mode.as_str()),
-                            ConfirmAction::SwitchGpu(target_mode),
-                        ));
-                    }
-                }
+        KeyCode::Left | KeyCode::Char('h') | KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter | KeyCode::Char(' ') => {
+            if app.system_selected_row == 2 {
+                export_system_report(app);
             } else {
                 toggle_system_row(app).await;
             }
@@ -352,25 +371,77 @@ async fn toggle_system_row<B: Backend>(app: &mut AppState<B>) {
 
 fn export_system_report<B: Backend>(app: &mut AppState<B>) {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let diag_path = format!("{home}/rogtui-diagnostics.txt");
+    let state_dir = std::path::PathBuf::from(&home).join(".local/state/rogtui");
+    let _ = std::fs::create_dir_all(&state_dir);
+
+    let mut buf = [0u8; 64];
+    let time = unsafe { libc::time(std::ptr::null_mut()) };
+    let tm = unsafe { libc::localtime(&time) };
+    let len = unsafe {
+        libc::strftime(
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            c"%Y-%m-%d-%H%M%S".as_ptr(),
+            tm,
+        )
+    };
+    let timestamp = if len > 0 {
+        String::from_utf8_lossy(&buf[..len]).to_string()
+    } else {
+        "report".to_string()
+    };
+
+    let filename = format!("report-{timestamp}.md");
+    let file_path = state_dir.join(&filename);
 
     let mut doc = String::new();
-    doc.push_str("rogtui System Diagnostics & Hardware Capabilities Report\n\n");
-    doc.push_str(&format!("Model: {}\n", crate::ui::system::detect_model()));
-    doc.push_str(&format!("BIOS: {}\n", crate::ui::system::detect_bios()));
-    doc.push_str(&format!("Kernel: {}\n", crate::ui::system::detect_kernel()));
-    doc.push_str(&format!("Session: {}\n", crate::ui::system::detect_session()));
-    doc.push_str(&format!("Display: {}\n", crate::ui::system::detect_display()));
-    doc.push_str(&format!("ROGTUI Version: {}\n", env!("CARGO_PKG_VERSION")));
-    doc.push_str(&format!("Platform Profile: {}\n", app.platform_profile.as_str()));
-    doc.push_str(&format!("GPU Mode: {}\n", app.gpu_mode.as_str()));
-    doc.push_str(&format!("Battery Charge: {}% (Limit: {}%)\n", app.sensors.battery_charge_percent.unwrap_or(0), app.charge_limit));
-    doc.push_str(&format!("Battery Health: {}%\n", app.sensors.battery_health_percent.unwrap_or(98)));
-    doc.push_str(&format!("Aura Brightness: {}\n", app.aura_brightness));
-    doc.push_str(&format!("Aura Mode: {}\n", app.aura_mode));
+    doc.push_str("# rogtui System Diagnostics & Hardware Capabilities Report\n\n");
+    doc.push_str(&format!("- Date: {}\n", timestamp));
+    doc.push_str(&format!("- Model: {}\n", crate::ui::system::detect_model()));
+    doc.push_str(&format!("- Processor: {}\n", crate::ui::system::detect_cpu()));
+    doc.push_str(&format!("- Graphics: {}\n", crate::ui::system::detect_gpu()));
+    doc.push_str(&format!("- Memory: {}\n", crate::ui::system::detect_ram()));
+    doc.push_str(&format!("- NVIDIA Driver: {}\n", crate::ui::system::detect_nvidia_driver()));
+    doc.push_str(&format!("- BIOS: {}\n", crate::ui::system::detect_bios()));
+    doc.push_str(&format!("- Kernel: {}\n", crate::ui::system::detect_kernel()));
+    doc.push_str(&format!("- Session: {}\n", crate::ui::system::detect_session()));
+    doc.push_str(&format!("- Display: {}\n", crate::ui::system::detect_display()));
+    doc.push_str(&format!("- ROGTUI Version: {}\n\n", env!("CARGO_PKG_VERSION")));
 
-    match std::fs::write(&diag_path, doc) {
-        Ok(_) => app.set_status(format!("Exported report to {diag_path}"), false),
+    doc.push_str("## Power & Platform\n\n");
+    doc.push_str(&format!("- Platform Profile: {}\n", app.platform_profile.as_str()));
+    doc.push_str(&format!("- Auto AC Profile: {}\n", if app.auto_ac { app.profile_ac.as_str() } else { "Off" }));
+    doc.push_str(&format!("- Auto Battery Profile: {}\n", if app.auto_battery { app.profile_battery.as_str() } else { "Off" }));
+    doc.push_str(&format!("- Charge Limit: {}%\n", app.charge_limit));
+    doc.push_str(&format!("- Battery Status: {}\n", app.sensors.battery_status));
+    doc.push_str(&format!("- Battery Health: {}%\n", app.sensors.battery_health_percent.unwrap_or(98)));
+    if let Some(cycles) = app.sensors.battery_cycle_count {
+        doc.push_str(&format!("- Battery Cycle Count: {}\n", cycles));
+    }
+    if let Some(w) = app.sensors.battery_power_w {
+        doc.push_str(&format!("- Power Draw: {:.1} W\n", w));
+    }
+
+    doc.push_str("\n## GPU Architecture\n\n");
+    doc.push_str(&format!("- Current GPU Mode: {}\n", app.gpu_mode.as_str()));
+    doc.push_str(&format!("- GPU Power State: {}\n", app.gpu_power.as_str()));
+
+    doc.push_str("\n## Fan Curves\n\n");
+    for fc in &app.fan_curves {
+        doc.push_str(&format!("### {} Fan Curve (Enabled: {})\n", fc.fan_name, fc.enabled));
+        for (i, pt) in fc.points.iter().enumerate() {
+            doc.push_str(&format!("  - Point {}: {}°C -> {}%\n", i + 1, pt.temp, pt.pwm_percent));
+        }
+    }
+
+    doc.push_str("\n## Aura RGB Lighting\n\n");
+    doc.push_str(&format!("- Brightness: {}\n", app.aura_brightness));
+    doc.push_str(&format!("- Mode: {}\n", app.aura_mode));
+    doc.push_str(&format!("- Primary Color: {}\n", app.aura_data.color1.to_hex()));
+    doc.push_str(&format!("- Secondary Color: {}\n", app.aura_data.color2.to_hex()));
+
+    match std::fs::write(&file_path, doc) {
+        Ok(_) => app.set_status(format!("Report saved to ~/.local/state/rogtui/{filename}"), false),
         Err(e) => app.set_status(format!("Failed to write report: {e}"), true),
     }
 }
@@ -553,7 +624,7 @@ async fn handle_fancurve<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
         }
 
         // Toggle custom curve on/off
-        KeyCode::Char('e') => {
+        KeyCode::Char('c') | KeyCode::Char('e') => {
             if let Some(curve) = app.fan_curves.get_mut(app.active_fan_idx) {
                 let new_v = !curve.enabled;
                 curve.enabled = new_v;
@@ -790,6 +861,14 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
                 app.set_status("Backlight is Off. Increase brightness to access colors.", true);
             }
         }
+        KeyCode::Char('#') => {
+            if app.aura_brightness > 0 {
+                app.hex_input_buffer = Some(String::new());
+                app.set_status("Enter 6 hex digits (e.g. ff4080) and press Enter:", false);
+            } else {
+                app.set_status("Backlight is Off. Increase brightness to access colors.", true);
+            }
+        }
         KeyCode::Enter => {
             if app.aura_brightness > 0 {
                 if app.aura_selected_field == 2 || (3..=5).contains(&app.aura_selected_field) {
@@ -838,14 +917,20 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             app.aura_brightness = b;
             let _ = app.backend.set_aura_brightness(b).await;
             if b == 0 {
-                if (1..=8).contains(&app.aura_selected_field) {
-                    app.aura_selected_field = 0;
+                if app.active_software_effect != SoftwareEffect::None {
+                    app.saved_software_effect = Some(app.active_software_effect);
                 }
-                app.active_software_effect = SoftwareEffect::None;
                 app.last_effect_color = None;
                 let _ = app.backend.write_volatile_rgb(RgbColor::new(0, 0, 0)).await;
-            } else if app.active_software_effect == SoftwareEffect::None && app.aura_mode == 0 {
-                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+            } else {
+                if let Some(saved) = app.saved_software_effect.take() {
+                    app.active_software_effect = saved;
+                }
+                if app.active_software_effect == SoftwareEffect::None && app.aura_mode == 0 {
+                    let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                } else {
+                    app.apply_software_effect().await;
+                }
             }
         }
         1 => {
@@ -922,6 +1007,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let count = presets.len() as i32;
             let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
             app.aura_data.color1 = presets[next_pos];
+            app.user_custom_color = next_pos != 0;
             if app.aura_mode == 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
@@ -931,6 +1017,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         3 => {
             let r = (app.aura_data.color1.r as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.r = r;
+            app.user_custom_color = true;
             if app.aura_mode == 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
@@ -938,6 +1025,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         4 => {
             let g = (app.aura_data.color1.g as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.g = g;
+            app.user_custom_color = true;
             if app.aura_mode == 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
@@ -945,6 +1033,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         5 => {
             let b = (app.aura_data.color1.b as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.b = b;
+            app.user_custom_color = true;
             if app.aura_mode == 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }

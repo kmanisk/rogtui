@@ -16,6 +16,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use app::{ActiveTab, AppState};
 use backend::mock::MockBackend;
 use backend::real::RealBackend;
+use ui::theme::Theme;
 
 fn print_usage() {
     println!("rogtui - Minimal, fast hardware control center for ASUS ROG & TUF laptops");
@@ -26,9 +27,89 @@ fn print_usage() {
     println!("  probe-modes   Sweep keyboard RGB modes 0-12 interactively to audit physical presets");
     println!();
     println!("Options:");
+    println!("  --check       Validate system support, daemons, and exit with diagnostic report");
     println!("  --mock        Run with simulated mock hardware (for testing without daemons)");
+    println!("  --no-color    Disable ANSI color sequences (monochrome mode)");
+    println!("  --ascii       Use pure ASCII box-drawing characters");
     println!("  -h, --help    Display this help message");
-    println!("  -v, --version Display version information");
+    println!("  -v, -V, --version Display version information");
+}
+
+async fn run_check() -> anyhow::Result<()> {
+    println!("rogtui System Compatibility Audit");
+    println!("─────────────────────────────────");
+
+    let model = ui::system::detect_model();
+    println!("  [OK] Model: {}", model);
+
+    let kernel = ui::system::detect_kernel();
+    println!("  [OK] Kernel: {}", kernel);
+
+    let session = ui::system::detect_session();
+    println!("  [OK] Session: {}", session);
+
+    let mut all_ok = true;
+
+    // Check system D-Bus
+    let dbus_res = zbus::Connection::system().await;
+    match &dbus_res {
+        Ok(conn) => {
+            println!("  [OK] D-Bus: system bus connected");
+
+            // Check asusd
+            let asusd_reply = conn
+                .call_method(
+                    Some("org.freedesktop.DBus"),
+                    "/org/freedesktop/DBus",
+                    Some("org.freedesktop.DBus"),
+                    "GetNameOwner",
+                    &("org.asuslinux.Daemon",),
+                )
+                .await;
+            if asusd_reply.is_ok() {
+                println!("  [OK] asusd: running (active)");
+            } else {
+                println!("  [WARN] asusd: not detected on D-Bus (may need: sudo systemctl start asusd)");
+            }
+
+            // Check supergfxd
+            let supergfxd_reply = conn
+                .call_method(
+                    Some("org.freedesktop.DBus"),
+                    "/org/freedesktop/DBus",
+                    Some("org.freedesktop.DBus"),
+                    "GetNameOwner",
+                    &("org.supergfxctl.Daemon",),
+                )
+                .await;
+            if supergfxd_reply.is_ok() {
+                println!("  [OK] supergfxd: running (active)");
+            } else {
+                println!("  [WARN] supergfxd: not detected on D-Bus (optional for GPU switching)");
+            }
+        }
+        Err(e) => {
+            println!("  [FAIL] D-Bus: unable to connect to system bus: {e}");
+            all_ok = false;
+        }
+    }
+
+    // Check ASUS sysfs
+    let asus_wmi = std::path::Path::new("/sys/devices/platform/asus-nb-wmi");
+    if asus_wmi.exists() {
+        println!("  [OK] Hardware: asus-nb-wmi platform driver loaded");
+    } else {
+        println!("  [INFO] Hardware: asus-nb-wmi not found (generic laptop mode)");
+    }
+
+    println!();
+    if all_ok {
+        println!("All checks passed. System is compatible with rogtui.");
+        Ok(())
+    } else {
+        println!("Compatibility checks failed. See diagnostics above.");
+        std::process::exit(1);
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -37,31 +118,35 @@ fn main() -> anyhow::Result<()> {
         print_usage();
         return Ok(());
     }
-    if args.iter().any(|a| a == "-v" || a == "--version") {
-        println!("rogtui v0.1.0 (asusd v6.5.0 + supergfxd v5.2.7)");
+    if args.iter().any(|a| a == "-v" || a == "-V" || a == "--version") {
+        println!("rogtui v{}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    if args.iter().any(|a| a == "probe-modes") {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        return rt.block_on(rogtui::probe::run_probe());
+    if args.iter().any(|a| a == "--ascii") {
+        env::set_var("ROGTUI_ASCII", "1");
     }
 
-    let use_mock = args.iter().any(|a| a == "--mock");
-
-    // Construct single-threaded Tokio current_thread runtime
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
+    if args.iter().any(|a| a == "--check") {
+        return rt.block_on(run_check());
+    }
+    if args.iter().any(|a| a == "probe-modes") {
+        return rt.block_on(rogtui::probe::run_probe());
+    }
+
+    let use_mock = args.iter().any(|a| a == "--mock");
+    let no_color = args.iter().any(|a| a == "--no-color");
+
     rt.block_on(async move {
         if use_mock {
             let backend = MockBackend::new();
-            run_app(backend).await
+            run_app(backend, no_color).await
         } else {
             match RealBackend::connect().await {
-                Ok(backend) => run_app(backend).await,
+                Ok(backend) => run_app(backend, no_color).await,
                 Err(err) => {
                     eprintln!("Error: Unable to connect to system DBus services (asusd / supergfxd):");
                     eprintln!("  {err}");
@@ -77,7 +162,7 @@ fn main() -> anyhow::Result<()> {
     })
 }
 
-async fn run_app<B: backend::Backend>(backend: B) -> anyhow::Result<()> {
+async fn run_app<B: backend::Backend>(backend: B, no_color: bool) -> anyhow::Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut out = stdout();
@@ -86,7 +171,7 @@ async fn run_app<B: backend::Backend>(backend: B) -> anyhow::Result<()> {
     let mut terminal = Terminal::new(term_backend)?;
     terminal.clear()?;
 
-    let res = app_loop(&mut terminal, backend).await;
+    let res = app_loop(&mut terminal, backend, no_color).await;
 
     // Restore terminal safely
     let _ = disable_raw_mode();
@@ -99,8 +184,12 @@ async fn run_app<B: backend::Backend>(backend: B) -> anyhow::Result<()> {
 async fn app_loop<B: backend::Backend>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     backend: B,
+    no_color: bool,
 ) -> anyhow::Result<()> {
     let mut app = AppState::new(backend).await?;
+    if no_color {
+        app.theme = Theme::monochrome();
+    }
 
     let mut event_reader = EventStream::new();
     let mut ticker = tokio::time::interval(Duration::from_millis(50));
@@ -149,6 +238,17 @@ async fn app_loop<B: backend::Backend>(
                     }
                 }
 
+                // Hot reload dynamic theme from colors.sh
+                let did_reload_theme = if !no_color {
+                    let reloaded = app.check_and_reload_system_theme();
+                    if reloaded && app.active_software_effect == SoftwareEffect::ThemeSync {
+                        app.apply_software_effect().await;
+                    }
+                    reloaded
+                } else {
+                    false
+                };
+
                 let effect_interval = match app.active_software_effect {
                     SoftwareEffect::VoicePulse | SoftwareEffect::AudioPulse | SoftwareEffect::AudioWave => Duration::from_millis(50),
                     SoftwareEffect::RainbowWave | SoftwareEffect::ColorCycle | SoftwareEffect::FireFlicker | SoftwareEffect::Clouds | SoftwareEffect::ThemeSync | SoftwareEffect::Strobe => Duration::from_millis(70),
@@ -166,6 +266,7 @@ async fn app_loop<B: backend::Backend>(
 
                 let should_redraw = did_refresh_sensors
                     || had_expired
+                    || did_reload_theme
                     || (did_apply_effect && matches!(app.current_tab, ActiveTab::Aura) && now.duration_since(last_draw_time) >= Duration::from_millis(70));
 
                 if should_redraw {
