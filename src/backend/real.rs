@@ -205,7 +205,29 @@ pub struct RealBackend {
     supergfx: SuperGfxProxy<'static>,
     armoury_nodes: Vec<String>,
     cpu_prev_stat: std::sync::Mutex<Option<(u64, u64)>>,
+    rapl_prev_stat: std::sync::Mutex<Option<(u64, std::time::Instant)>>,
     nvml: crate::backend::nvml::NvmlReader,
+}
+
+pub fn is_ac_online() -> bool {
+    let ac_paths = [
+        "/sys/class/power_supply/ADP0/online",
+        "/sys/class/power_supply/AC/online",
+        "/sys/class/power_supply/ACAD/online",
+    ];
+    for p in &ac_paths {
+        if let Ok(s) = std::fs::read_to_string(p) {
+            if s.trim() == "1" {
+                return true;
+            }
+        }
+    }
+    if let Ok(st) = std::fs::read_to_string("/sys/class/power_supply/BAT0/status") {
+        if st.trim().eq_ignore_ascii_case("discharging") {
+            return false;
+        }
+    }
+    true
 }
 
 impl RealBackend {
@@ -240,6 +262,7 @@ impl RealBackend {
             supergfx,
             armoury_nodes,
             cpu_prev_stat: std::sync::Mutex::new(None),
+            rapl_prev_stat: std::sync::Mutex::new(None),
             nvml,
         })
     }
@@ -489,7 +512,11 @@ impl super::Backend for RealBackend {
 
     async fn get_gpu_supported(&self) -> anyhow::Result<Vec<GpuMode>> {
         let raw = self.supergfx.supported().await?;
-        Ok(raw.into_iter().map(GpuMode::from_u32).collect())
+        Ok(raw
+            .into_iter()
+            .map(GpuMode::from_u32)
+            .filter(|m| !matches!(m, GpuMode::Vfio | GpuMode::None | GpuMode::Unknown))
+            .collect())
     }
 
     async fn get_gpu_power(&self) -> anyhow::Result<GpuPowerState> {
@@ -615,7 +642,23 @@ impl super::Backend for RealBackend {
         }
         if let Ok(pw) = fs::read_to_string("/sys/class/power_supply/BAT0/power_now") {
             if let Ok(u_w) = pw.trim().parse::<f32>() {
-                sensors.battery_power_w = Some(u_w / 1_000_000.0);
+                let w = u_w / 1_000_000.0;
+                if w > 0.0 {
+                    sensors.battery_power_w = Some(w);
+                }
+            }
+        }
+        if sensors.battery_power_w.is_none() || sensors.battery_power_w == Some(0.0) {
+            if let (Ok(c), Ok(v)) = (
+                fs::read_to_string("/sys/class/power_supply/BAT0/current_now"),
+                fs::read_to_string("/sys/class/power_supply/BAT0/voltage_now"),
+            ) {
+                if let (Ok(cu), Ok(vo)) = (c.trim().parse::<f32>(), v.trim().parse::<f32>()) {
+                    let w = (cu * vo) / 1_000_000_000_000.0;
+                    if w > 0.0 {
+                        sensors.battery_power_w = Some(w);
+                    }
+                }
             }
         }
         if let (Ok(efull), Ok(edesign)) = (
@@ -628,6 +671,45 @@ impl super::Backend for RealBackend {
         }
         if let Ok(cyc) = fs::read_to_string("/sys/class/power_supply/BAT0/cycle_count") {
             sensors.battery_cycle_count = cyc.trim().parse::<u32>().ok();
+        }
+
+        // CPU Package Power via intel-rapl energy_uj
+        if let Ok(e_str) = fs::read_to_string("/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj") {
+            if let Ok(cur_uj) = e_str.trim().parse::<u64>() {
+                let now = std::time::Instant::now();
+                let mut prev_guard = self.rapl_prev_stat.lock().unwrap();
+                if let Some((prev_uj, prev_time)) = *prev_guard {
+                    let elapsed = now.duration_since(prev_time).as_secs_f32();
+                    if elapsed >= 0.5 && cur_uj >= prev_uj {
+                        let delta_uj = cur_uj - prev_uj;
+                        let watts = (delta_uj as f32 / 1_000_000.0) / elapsed;
+                        if (0.0..=250.0).contains(&watts) {
+                            sensors.cpu_power_w = Some(watts);
+                        }
+                    }
+                }
+                *prev_guard = Some((cur_uj, now));
+            }
+        }
+        // Fallback for AMD or other platforms via hwmon power1_input
+        if sensors.cpu_power_w.is_none() {
+            if let Ok(entries) = fs::read_dir("/sys/class/hwmon") {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    let name_file = p.join("name");
+                    if let Ok(name) = fs::read_to_string(&name_file) {
+                        let name = name.trim();
+                        if name.contains("amdgpu") || name.contains("k10temp") || name.contains("zenpower") || name.contains("coretemp") {
+                            if let Ok(pw) = fs::read_to_string(p.join("power1_input")) {
+                                if let Ok(u_w) = pw.trim().parse::<f32>() {
+                                    sensors.cpu_power_w = Some(u_w / 1_000_000.0);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // 2. CPU Model
@@ -759,26 +841,34 @@ impl super::Backend for RealBackend {
 
                         if status_clean == "active" {
                             // Discrete GPU is active: safe to read without waking D3cold
-                            let (gpu_temp, gpu_util) = self.nvml.query_gpu_metrics();
+                            let (gpu_temp, gpu_util, gpu_power) = self.nvml.query_gpu_metrics();
                             sensors.gpu_temp_c = gpu_temp;
                             sensors.gpu_usage_percent = gpu_util.map(|u| u as u8);
-                            match (gpu_temp, gpu_util) {
-                                (Some(t), Some(u)) => {
+                            sensors.gpu_power_w = gpu_power;
+                            match (gpu_temp, gpu_util, gpu_power) {
+                                (Some(t), Some(u), Some(p)) => {
+                                    sensors.dgpu_status = format!("Active ({t} C, {u}% util · {p:.0} W)");
+                                }
+                                (Some(t), Some(u), None) => {
                                     sensors.dgpu_status = format!("Active ({t} C, {u}% util)");
                                 }
-                                (Some(t), None) => {
+                                (Some(t), None, _) => {
                                     sensors.dgpu_status = format!("Active ({t} C)");
                                 }
                                 _ => {
                                     sensors.dgpu_status = "Active (n/a)".to_string();
                                 }
                             }
-                        } else if status_clean == "suspended" {
+                        } else if status_clean == "suspended" || status_clean == "d3cold" {
                             // Discrete GPU is in low-power D3cold: DO NOT wake it
                             sensors.gpu_temp_c = None;
+                            sensors.gpu_usage_percent = Some(0);
+                            sensors.gpu_power_w = Some(0.0);
                             sensors.dgpu_status = "Suspended (D3cold)".to_string();
                         } else {
                             sensors.gpu_temp_c = None;
+                            sensors.gpu_usage_percent = None;
+                            sensors.gpu_power_w = None;
                             sensors.dgpu_status = format!("Power: {status_clean}");
                         }
                         break;
@@ -803,5 +893,61 @@ impl super::Backend for RealBackend {
         }
 
         Ok(sensors)
+    }
+
+    async fn get_slash_supported(&self) -> anyhow::Result<bool> {
+        Ok(std::path::Path::new("/sys/devices/platform/asus-nb-wmi/leds/asus::slash").exists())
+    }
+
+    async fn get_slash_mode(&self) -> anyhow::Result<String> {
+        let out = tokio::process::Command::new("asusctl")
+            .args(["slash", "get"])
+            .output()
+            .await;
+        if let Ok(output) = out {
+            let s = String::from_utf8_lossy(&output.stdout);
+            for line in s.lines() {
+                if let Some((_, mode)) = line.split_once(':') {
+                    return Ok(mode.trim().to_string());
+                }
+            }
+        }
+        Ok("Static".to_string())
+    }
+
+    async fn set_slash_mode(&self, mode: &str) -> anyhow::Result<()> {
+        if mode.eq_ignore_ascii_case("off") {
+            let _ = tokio::process::Command::new("asusctl")
+                .args(["slash", "--disable"])
+                .output()
+                .await;
+        } else {
+            let _ = tokio::process::Command::new("asusctl")
+                .args(["slash", "--enable"])
+                .output()
+                .await;
+            let _ = tokio::process::Command::new("asusctl")
+                .args(["slash", "--mode", mode])
+                .output()
+                .await;
+        }
+        Ok(())
+    }
+
+    async fn get_slash_brightness(&self) -> anyhow::Result<u32> {
+        if let Ok(b) = fs::read_to_string("/sys/devices/platform/asus-nb-wmi/leds/asus::slash/brightness") {
+            if let Ok(val) = b.trim().parse::<u32>() {
+                return Ok(val);
+            }
+        }
+        Ok(2)
+    }
+
+    async fn set_slash_brightness(&self, level: u32) -> anyhow::Result<()> {
+        let _ = tokio::process::Command::new("asusctl")
+            .args(["slash", "-l", &level.to_string()])
+            .output()
+            .await;
+        Ok(())
     }
 }

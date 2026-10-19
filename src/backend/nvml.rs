@@ -21,6 +21,7 @@ struct NvmlFunctions {
     get_handle_by_index: unsafe extern "C" fn(c_uint, *mut NvmlDevice) -> NvmlReturn,
     get_temp: unsafe extern "C" fn(NvmlDevice, c_uint, *mut c_uint) -> NvmlReturn,
     get_utilization: unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> NvmlReturn,
+    get_power_usage: Option<unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> NvmlReturn>,
 }
 
 unsafe impl Send for NvmlFunctions {}
@@ -35,7 +36,7 @@ impl Drop for NvmlFunctions {
     }
 }
 
-type GpuMetricsCache = (Instant, Option<u32>, Option<u32>);
+type GpuMetricsCache = (Instant, Option<u32>, Option<u32>, Option<f32>);
 
 pub struct NvmlReader {
     funcs: Option<NvmlFunctions>,
@@ -98,6 +99,14 @@ impl NvmlReader {
                 b"nvmlDeviceGetUtilizationRates\0",
                 unsafe extern "C" fn(NvmlDevice, *mut NvmlUtilization) -> NvmlReturn
             );
+            let get_power_usage = {
+                let s = libc::dlsym(handle, c"nvmlDeviceGetPowerUsage".as_ptr());
+                if s.is_null() {
+                    None
+                } else {
+                    Some(std::mem::transmute::<*mut c_void, unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> NvmlReturn>(s))
+                }
+            };
 
             let ret = init();
             if ret != NVML_SUCCESS {
@@ -112,29 +121,30 @@ impl NvmlReader {
                 get_handle_by_index,
                 get_temp,
                 get_utilization,
+                get_power_usage,
             })
         }
     }
 
-    pub fn query_gpu_metrics(&self) -> (Option<u32>, Option<u32>) {
+    pub fn query_gpu_metrics(&self) -> (Option<u32>, Option<u32>, Option<f32>) {
         let funcs = match self.funcs.as_ref() {
             Some(f) => f,
-            None => return (None, None),
+            None => return (None, None, None),
         };
 
         // Cache for 3 seconds to keep polling at 2-5s intervals without spawning processes
         let mut cache = self.last_query.lock().unwrap();
-        if let Some((ts, temp, util)) = *cache {
+        if let Some((ts, temp, util, power)) = *cache {
             if ts.elapsed() < Duration::from_secs(3) {
-                return (temp, util);
+                return (temp, util, power);
             }
         }
 
         unsafe {
             let mut device: NvmlDevice = std::ptr::null_mut();
             if (funcs.get_handle_by_index)(0, &mut device) != NVML_SUCCESS {
-                *cache = Some((Instant::now(), None, None));
-                return (None, None);
+                *cache = Some((Instant::now(), None, None, None));
+                return (None, None, None);
             }
 
             let mut temp_val: c_uint = 0;
@@ -151,8 +161,19 @@ impl NvmlReader {
                 None
             };
 
-            *cache = Some((Instant::now(), temp_opt, util_opt));
-            (temp_opt, util_opt)
+            let power_opt = if let Some(get_pwr) = funcs.get_power_usage {
+                let mut pwr_val: c_uint = 0;
+                if (get_pwr)(device, &mut pwr_val) == NVML_SUCCESS {
+                    Some(pwr_val as f32 / 1000.0)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            *cache = Some((Instant::now(), temp_opt, util_opt, power_opt));
+            (temp_opt, util_opt, power_opt)
         }
     }
 }

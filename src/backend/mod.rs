@@ -58,4 +58,10 @@ pub trait Backend: Send + Sync + 'static {
     fn restore_armoury_default(&self, node_name: &str) -> impl Future<Output = anyhow::Result<()>> + Send;
 
     fn read_sensors(&self) -> impl Future<Output = anyhow::Result<SensorData>> + Send;
+
+    fn get_slash_supported(&self) -> impl Future<Output = anyhow::Result<bool>> + Send;
+    fn get_slash_mode(&self) -> impl Future<Output = anyhow::Result<String>> + Send;
+    fn set_slash_mode(&self, mode: &str) -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn get_slash_brightness(&self) -> impl Future<Output = anyhow::Result<u32>> + Send;
+    fn set_slash_brightness(&self, level: u32) -> impl Future<Output = anyhow::Result<()>> + Send;
 }

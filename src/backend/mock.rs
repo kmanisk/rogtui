@@ -148,6 +148,7 @@ impl MockBackend {
             cpu_model: "13th Gen Intel(R) Core(TM) i5-13450HX".to_string(),
             cpu_freq_mhz: Some(3900),
             cpu_usage_percent: Some(18),
+            cpu_power_w: Some(18.5),
             ram_used_mb: Some(10129),
             ram_total_mb: Some(15584),
             ram_usage_percent: Some(64),
@@ -157,6 +158,7 @@ impl MockBackend {
             dgpu_status: "Active (46 C)".to_string(),
             dgpu_power_state: "Active".to_string(),
             gpu_usage_percent: Some(7),
+            gpu_power_w: Some(8.2),
             battery_status: "Not charging".to_string(),
             battery_power_w: Some(0.0),
             battery_health_percent: Some(98),
@@ -454,5 +456,25 @@ impl Backend for MockBackend {
     async fn read_sensors(&self) -> anyhow::Result<SensorData> {
         let lock = self.state.lock().unwrap();
         Ok(lock.sensors.clone())
+    }
+
+    async fn get_slash_supported(&self) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
+    async fn get_slash_mode(&self) -> anyhow::Result<String> {
+        Ok("Static".to_string())
+    }
+
+    async fn set_slash_mode(&self, _mode: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn get_slash_brightness(&self) -> anyhow::Result<u32> {
+        Ok(2)
+    }
+
+    async fn set_slash_brightness(&self, _level: u32) -> anyhow::Result<()> {
+        Ok(())
     }
 }

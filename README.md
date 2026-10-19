@@ -32,14 +32,16 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly interfa
 
 ### 1. Dash (Tab 1)
 - Unified grid rows for Processor, Graphics, Memory, and Battery with identical column alignment across metrics.
-- RTX 5050 dGPU usage/temp/fan, displaying dim "Idle" when suspended or at 0% without rendering empty broken bars.
-- Battery summary: percentage, current power draw in watts (e.g. `18.4 W`), tick mark (`╵`/`╷`) at charge threshold, and charging state.
+- Real-time CPU package power draw in Watts via Intel RAPL microjoule delta counter (`intel-rapl:0/energy_uj`).
+- Real-time dGPU power draw in Watts via dynamic NVML query (`nvmlDeviceGetPowerUsage`), indicating `D3cold (0 W)` when suspended with zero subprocess overhead.
+- Live battery discharge/charge rate in Watts (`power_now` / `current_now * voltage_now`) and charging threshold indicator (`╵`/`╷`).
 - Full-width dual-line Braille temperature chart (last 2 minutes) for CPU and GPU with a linear 30-100°C axis.
 - Quick profile cycling shortcut (`p`).
 
 ### 2. Power (Tab 2)
 - Platform profile selector: Quiet, Balanced, Performance.
-- Automatic profile bindings with "Switch automatically" subheading (`When plugged in: ‹...›`, `On battery: ‹...›`).
+- Automatic power transition hook: smoothly switches profiles when AC power is plugged in (`When plugged in`) or unplugged (`On battery`).
+- Automatic travel mode reset: one-shot full charge override automatically resets back to configured lifespan limit when charger is disconnected.
 - Charge limit slider with tick marks at 60% and 80% (`40 ━━━━━━━━╷───────╷─────── 100   60%`) and battery lifespan advice.
 - One-shot full charge override action row (`[ Start ↵ ]`) to temporarily charge to 100% for travel.
 - Dedicated read-only Status subsection (Health, Cycles, Discharge/Rate) automatically bypassed by j/k navigation.
@@ -56,6 +58,7 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly interfa
 - 4-state segmented brightness control: `Off · Low · Med · High`.
 - Contextual lighting controls: 18 effect modes including Static, Breathe, Color Cycle, Rainbow Wave, Audio Pulse, Voice Pulse, Ambient Screen Sync (Wayland grim), and Dynamic Theme.
 - Dynamic Theme hot reloading: monitors `~/.local/state/theme/colors.sh` on each tick and syncs rising accent colors (Void purple `#bb9af7`, Scaryforest teal `#77beb4`, Gruvbox `#ebdbb2`, Catppuccin `#f5c2e7`, Nord `#88c0d0`).
+- Hardware-adaptive Slash LED lighting: dynamically detects Zephyrus lid LED bars (`/sys/devices/platform/asus-nb-wmi/leds/asus::slash`) and provides modes and brightness controls without cluttering TUF/Strix models.
 - Color selection: Preset picker, custom hex with live `██` block preview, and direct hex entry modal (`#`).
 - Hardware power states: individual vertically navigated rows (`Boot`, `Awake`, `Sleep`, `Shutdown`) with standard `● On` / `○ Off` toggle controls.
 - Smooth Audio Wave: Dynamic continuous spectrum frequency EQ with exponential moving average level smoothing and low-pass hue interpolation.
@@ -64,7 +67,7 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly interfa
 ### 5. System (Tab 5)
 - Consolidated single view combining Display, Graphics, Diagnostics, and About information.
 - Display controls: Panel Overdrive (3ms toggle) and Screen Auto-Brightness.
-- Graphics: Clean read-only GPU mode display (`‹ Dedicated GPU (MUX) ›`) with reminder that mode changes take effect on next login.
+- Graphics: Clean read-only GPU mode display (`‹ Dedicated GPU (MUX) ›`) with non-desktop GPU mode filtering (`VFIO`, `None`, `Unknown`).
 - Diagnostics action: `Export report [ Run ↵ ]` writes comprehensive markdown reports to `~/.local/state/rogtui/report-<timestamp>.md`.
 - About section: Model, Processor, Graphics, Memory, NVIDIA Driver version, OS, Session, Display mode, and ROGTUI version.
 

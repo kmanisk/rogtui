@@ -128,16 +128,21 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     };
     let discharge_val = if let Some(w) = power_w {
         if is_charging {
-            format!("{w:.1} W (Charging)")
+            format!("+{w:.1} W (Charging)")
         } else if is_full {
             "Plugged in (Full)".to_string()
-        } else {
+        } else if w > 0.0 {
             format!("{w:.1} W")
+        } else {
+            "Plugged in, not charging".to_string()
         }
     } else if !app.sensors.battery_status.is_empty() {
-        app.sensors.battery_status.clone()
+        match app.sensors.battery_status.as_str() {
+            "Not charging" => "Plugged in, not charging".to_string(),
+            other => other.to_string(),
+        }
     } else {
-        "18.4 W".to_string()
+        "Plugged in, not charging".to_string()
     };
     lines.push(label_value_row(
         discharge_label,

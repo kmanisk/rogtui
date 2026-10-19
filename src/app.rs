@@ -478,6 +478,10 @@ pub struct AppState<B: Backend> {
     pub color_cycle_progress: f32,
     pub is_full_charge_active: bool,
     pub last_theme_mtime: Option<std::time::SystemTime>,
+    pub last_ac_online: Option<bool>,
+    pub has_slash_led: bool,
+    pub slash_mode: String,
+    pub slash_brightness: u32,
 }
 
 impl<B: Backend> AppState<B> {
@@ -535,6 +539,19 @@ impl<B: Backend> AppState<B> {
         }
 
         let gpu_selected_idx = gpu_supported.iter().position(|m| *m == gpu_mode).unwrap_or(0);
+
+        let has_slash_led = backend.get_slash_supported().await.unwrap_or(false);
+        let slash_mode = if has_slash_led {
+            backend.get_slash_mode().await.unwrap_or_else(|_| "Static".to_string())
+        } else {
+            "Static".to_string()
+        };
+        let slash_brightness = if has_slash_led {
+            backend.get_slash_brightness().await.unwrap_or(2)
+        } else {
+            2
+        };
+        let last_ac_online = Some(crate::backend::real::is_ac_online());
 
         Ok(Self {
             backend,
@@ -619,6 +636,10 @@ impl<B: Backend> AppState<B> {
             color_cycle_progress: 0.0,
             is_full_charge_active: false,
             last_theme_mtime: None,
+            last_ac_online,
+            has_slash_led,
+            slash_mode,
+            slash_brightness,
         })
     }
 
@@ -703,6 +724,8 @@ impl<B: Backend> AppState<B> {
                     10 => "Keep keyboard lit while system is running.".to_string(),
                     11 => "Keep keyboard lit during system suspend.".to_string(),
                     12 => "Keep keyboard lit during system shutdown.".to_string(),
+                    13 => "Slash lighting animation mode for Zephyrus lid LED bar.".to_string(),
+                    14 => "Slash lighting intensity (Off, Low, Med, High).".to_string(),
                     _ => String::new(),
                 }
             }
@@ -731,6 +754,44 @@ impl<B: Backend> AppState<B> {
             return true;
         }
         false
+    }
+
+    pub async fn check_and_apply_power_state_transition(&mut self) -> bool {
+        let current_ac = crate::backend::real::is_ac_online();
+        let mut changed = false;
+
+        if let Some(prev_ac) = self.last_ac_online {
+            if prev_ac != current_ac {
+                self.last_ac_online = Some(current_ac);
+                if current_ac {
+                    // Plugged in to AC adapter
+                    if self.auto_ac && self.platform_profile != self.profile_ac {
+                        let _ = self.backend.set_platform_profile(self.profile_ac).await;
+                        self.platform_profile = self.profile_ac;
+                        self.set_status(format!("Switched to {} profile (AC Power)", self.profile_ac.as_str()), false);
+                        changed = true;
+                    }
+                } else {
+                    // Running on battery
+                    if self.auto_battery && self.platform_profile != self.profile_battery {
+                        let _ = self.backend.set_platform_profile(self.profile_battery).await;
+                        self.platform_profile = self.profile_battery;
+                        self.set_status(format!("Switched to {} profile (Battery)", self.profile_battery.as_str()), false);
+                        changed = true;
+                    }
+                    // Auto-reset travel mode / full charge oneshot when unplugged
+                    if self.is_full_charge_active {
+                        self.is_full_charge_active = false;
+                        let _ = self.backend.set_charge_limit(self.charge_limit).await;
+                        changed = true;
+                    }
+                }
+            }
+        } else {
+            self.last_ac_online = Some(current_ac);
+        }
+
+        changed
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>, is_error: bool) {

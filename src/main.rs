@@ -264,9 +264,12 @@ async fn app_loop<B: backend::Backend>(
                     did_apply_effect = true;
                 }
 
+                let did_power_transition = app.check_and_apply_power_state_transition().await;
+
                 let should_redraw = did_refresh_sensors
                     || had_expired
                     || did_reload_theme
+                    || did_power_transition
                     || (did_apply_effect && matches!(app.current_tab, ActiveTab::Aura) && now.duration_since(last_draw_time) >= Duration::from_millis(70));
 
                 if should_redraw {

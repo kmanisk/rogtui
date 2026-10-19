@@ -95,6 +95,7 @@ pub fn is_aura_field_supported<B: Backend>(app: &AppState<B>, field: usize) -> b
         6 => is_firmware_breathe,
         7 => is_animated,
         8 => has_direction,
+        13 | 14 => app.has_slash_led,
         _ => false,
     }
 }
@@ -272,6 +273,27 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         label_width,
         theme,
     ));
+
+    if app.has_slash_led {
+        if area.height >= 22 {
+            lines.push(Line::from(""));
+        }
+        lines.push(section_rule("Slash Lighting", width, theme));
+        if area.height >= 22 {
+            lines.push(Line::from(""));
+        }
+
+        let is_slash_mode_sel = app.aura_selected_field == 13;
+        let is_slash_b_sel = app.aura_selected_field == 14;
+
+        let mode_spans = choice_widget(&app.slash_mode, is_slash_mode_sel, theme);
+        lines.push(label_value_row("Slash mode", mode_spans, is_slash_mode_sel, label_width, theme));
+
+        let b_opts = ["Off", "Low", "Med", "High"];
+        let b_idx = app.slash_brightness.clamp(0, 3) as usize;
+        let b_spans = segmented_control(&b_opts, b_idx, is_slash_b_sel, theme);
+        lines.push(label_value_row("Slash brightness", b_spans, is_slash_b_sel, label_width, theme));
+    }
 
     f.render_widget(Paragraph::new(lines), area);
 

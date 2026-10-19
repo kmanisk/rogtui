@@ -791,6 +791,7 @@ pub struct SensorData {
     pub cpu_model: String,
     pub cpu_freq_mhz: Option<u32>,
     pub cpu_usage_percent: Option<u8>,
+    pub cpu_power_w: Option<f32>,
     pub ram_used_mb: Option<u64>,
     pub ram_total_mb: Option<u64>,
     pub ram_usage_percent: Option<u8>,
@@ -800,6 +801,7 @@ pub struct SensorData {
     pub dgpu_status: String,
     pub dgpu_power_state: String,
     pub gpu_usage_percent: Option<u8>,
+    pub gpu_power_w: Option<f32>,
 
     // Battery Extended Telemetry
     pub battery_status: String,

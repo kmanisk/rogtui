@@ -813,11 +813,16 @@ async fn apply_fancurves<B: Backend>(app: &mut AppState<B>) {
 }
 
 fn next_aura_field<B: Backend>(app: &AppState<B>, current: usize, dir: i32) -> usize {
-    let all: &[usize] = if app.aura_brightness == 0 {
-        &[0, 9, 10, 11, 12]
+    let mut all: Vec<usize> = if app.aura_brightness == 0 {
+        vec![0, 9, 10, 11, 12]
     } else {
-        &[0, 1, 7, 8, 2, 3, 4, 5, 6, 9, 10, 11, 12]
+        vec![0, 1, 7, 8, 2, 3, 4, 5, 6, 9, 10, 11, 12]
     };
+
+    if app.has_slash_led {
+        all.push(13);
+        all.push(14);
+    }
 
     let accessible: Vec<usize> = all
         .iter()
@@ -1084,6 +1089,26 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let state = if app.aura_power.shutdown { "enabled" } else { "disabled" };
             app.set_status(format!("Shutdown backlight {state}"), false);
             let _ = app.backend.set_aura_power(&app.aura_power).await;
+        }
+        13 => {
+            let modes = ["Off", "Static", "Bounce", "Slash", "Flow", "Spectrum"];
+            let cur_idx = modes.iter().position(|m| m.eq_ignore_ascii_case(&app.slash_mode)).unwrap_or(1);
+            let next_idx = ((cur_idx as i32 + dir + modes.len() as i32) % modes.len() as i32) as usize;
+            app.slash_mode = modes[next_idx].to_string();
+            let _ = app.backend.set_slash_mode(&app.slash_mode).await;
+            app.set_status(format!("Slash Mode: {}", app.slash_mode), false);
+        }
+        14 => {
+            let b = (app.slash_brightness as i32 + dir).clamp(0, 3) as u32;
+            app.slash_brightness = b;
+            let _ = app.backend.set_slash_brightness(b).await;
+            let b_str = match b {
+                0 => "Off",
+                1 => "Low",
+                2 => "Med",
+                _ => "High",
+            };
+            app.set_status(format!("Slash Brightness: {b_str}"), false);
         }
         _ => {}
     }

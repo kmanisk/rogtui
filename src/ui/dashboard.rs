@@ -204,9 +204,14 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         val_w,
         theme,
     ));
+    let cpu_detail = if let Some(w) = app.sensors.cpu_power_w {
+        format!("{cpu_name}   ·   {w:.0} W")
+    } else {
+        cpu_name.to_string()
+    };
     lines.push(Line::from(vec![
         Span::raw("            "),
-        Span::styled(cpu_name, Style::default().fg(theme.dim)),
+        Span::styled(cpu_detail, Style::default().fg(theme.dim)),
     ]));
     lines.push(Line::from(""));
 
@@ -254,9 +259,16 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         val_w,
         theme,
     ));
+    let gpu_detail = if is_suspended {
+        "RTX 5050 Mobile   ·   D3cold (0 W)".to_string()
+    } else if let Some(w) = app.sensors.gpu_power_w {
+        format!("RTX 5050 Mobile   ·   {w:.0} W")
+    } else {
+        "RTX 5050 Mobile".to_string()
+    };
     lines.push(Line::from(vec![
         Span::raw("            "),
-        Span::styled("RTX 5050 Mobile", Style::default().fg(theme.dim)),
+        Span::styled(gpu_detail, Style::default().fg(theme.dim)),
     ]));
     lines.push(Line::from(""));
 
@@ -355,12 +367,34 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
     ));
 
     let health_pct = app.sensors.battery_health_percent.unwrap_or(98);
-    lines.push(Line::from(vec![
+    let mut bat_details = vec![
         Span::raw("            "),
         Span::styled(format!("Limit {}%", app.charge_limit), Style::default().fg(theme.dim)),
         Span::styled("   ·   ", Style::default().fg(Color::Rgb(70, 75, 85))),
         Span::styled(format!("Health {}%", health_pct), Style::default().fg(theme.dim)),
-    ]));
+    ];
+    if is_discharging {
+        if let Some(w) = app.sensors.battery_power_w {
+            let pwr_col = if w > 20.0 {
+                theme.err
+            } else if w > 10.0 {
+                theme.warn
+            } else {
+                theme.ok
+            };
+            bat_details.push(Span::styled("   ·   ", Style::default().fg(Color::Rgb(70, 75, 85))));
+            bat_details.push(Span::styled(format!("{w:.1} W discharge"), Style::default().fg(pwr_col)));
+        }
+    } else if app.sensors.battery_status.eq_ignore_ascii_case("charging") {
+        if let Some(w) = app.sensors.battery_power_w {
+            bat_details.push(Span::styled("   ·   ", Style::default().fg(Color::Rgb(70, 75, 85))));
+            bat_details.push(Span::styled(format!("+{w:.1} W charge"), Style::default().fg(theme.ok)));
+        }
+    } else {
+        bat_details.push(Span::styled("   ·   ", Style::default().fg(Color::Rgb(70, 75, 85))));
+        bat_details.push(Span::styled("AC Wall Power", Style::default().fg(theme.dim)));
+    }
+    lines.push(Line::from(bat_details));
     lines.push(Line::from(""));
 
     // -------------------------------------------------------------------------
