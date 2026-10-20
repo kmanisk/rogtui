@@ -883,5 +883,124 @@ async fn test_power_tab_compact_layout_no_spacers() {
     assert!(line0.contains("Profile"), "Power tab line 0 must start immediately with Profile rule, with zero top gap");
 }
 
+#[tokio::test]
+async fn test_modal_enter_key_confirms() {
+    use crossterm::event::{KeyCode, KeyEvent};
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+
+    // Open a confirm modal to switch GPU mode
+    app.confirm_modal = Some((
+        "Switch to Hybrid GPU mode?".to_string(),
+        rogtui::app::ConfirmAction::SwitchGpu(rogtui::backend::types::GpuMode::Hybrid),
+    ));
+
+    // Press Enter to confirm
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Enter)).await;
+
+    assert!(app.confirm_modal.is_none(), "Enter key must confirm and close modal");
+    assert_eq!(app.gpu_pending_mode, rogtui::backend::types::GpuMode::Hybrid, "Enter must execute the confirmed action");
+}
+
+#[tokio::test]
+async fn test_dashboard_alignment_and_wattage_matching() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.sensors.cpu_power_w = Some(12.0);
+    app.sensors.gpu_power_w = Some(9.0);
+
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let test_backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(test_backend).unwrap();
+    terminal.draw(|f| rogtui::ui::dashboard::render_dashboard(f, &app, f.area())).unwrap();
+    let buffer = terminal.backend().buffer();
+
+    let mut cpu_subrow = String::new();
+    let mut gpu_subrow = String::new();
+    let mut bat_subrow = String::new();
+
+    for y in 0..30 {
+        let mut row_text = String::new();
+        for x in 0..100 {
+            row_text.push_str(buffer[(x, y)].symbol());
+        }
+        if row_text.contains("Intel Core") {
+            cpu_subrow = row_text;
+        } else if row_text.contains("RTX 5050") {
+            gpu_subrow = row_text;
+        } else if row_text.contains("Limit") && row_text.contains("Health") {
+            bat_subrow = row_text;
+        }
+    }
+
+    // Verify sub-rows start at column 2 (2 spaces), matching 'CPU', 'GPU', 'Battery' alignment
+    assert!(cpu_subrow.starts_with("  Intel Core"), "CPU sub-row must align to left at column 2");
+    assert!(gpu_subrow.starts_with("  RTX 5050"), "GPU sub-row must align to left at column 2");
+    assert!(bat_subrow.starts_with("  Limit"), "Battery sub-row must align to left at column 2");
+
+    // Verify wattage separators line up at the exact same column
+    let cpu_dot = cpu_subrow.find('·').unwrap_or(0);
+    let gpu_dot = gpu_subrow.find('·').unwrap_or(0);
+    assert_eq!(cpu_dot, gpu_dot, "CPU and GPU live wattage '·' must vertically align at the exact same column");
+}
+
+#[test]
+fn test_daemon_state_roundtrip() {
+    use rogtui::daemon::RgbDaemonState;
+    use rogtui::backend::types::{RgbColor, SoftwareEffect};
+
+    let state = RgbDaemonState {
+        effect: SoftwareEffect::RainbowWave,
+        brightness: 3,
+        speed: "high".to_string(),
+        color1: RgbColor::new(1, 1, 1),
+        color2: RgbColor::new(0, 0, 0),
+        voice_sensitivity: 80,
+    };
+
+    let toml_str = toml::to_string(&state).expect("serialize");
+    let loaded: RgbDaemonState = toml::from_str(&toml_str).expect("deserialize");
+
+    assert_eq!(loaded.effect, SoftwareEffect::RainbowWave);
+    assert_eq!(loaded.brightness, 3);
+    assert_eq!(loaded.voice_sensitivity, 80);
+    assert_eq!(loaded.color1, RgbColor::new(1, 1, 1));
+}
+
+#[tokio::test]
+async fn test_max_brightness_dynamic_range() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.aura_brightness = 3; // Max brightness
+    app.aura_data.color1 = rogtui::backend::types::RgbColor::new(255, 255, 255);
+    app.user_custom_color = true;
+
+    // At level 0 (silence), color should drop to 0
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::VoicePulse;
+    app.audio_level = 0;
+    app.mic_level = 0;
+    let col0 = app.compute_voice_pulse_color();
+    assert_eq!(col0, rogtui::backend::types::RgbColor::new(0, 0, 0), "Max brightness must drop to 0 on silence");
+}
+
+#[tokio::test]
+async fn test_rgb_tab_hides_rgb_sliders_for_presets() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.aura_brightness = 2;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioPulse;
+
+    // Set to Spectrum Cycle preset
+    app.aura_data.color1 = rogtui::backend::types::RgbColor::new(1, 1, 1);
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 3), "Field 3 (R) must NOT be supported for Spectrum Cycle");
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 4), "Field 4 (G) must NOT be supported for Spectrum Cycle");
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 5), "Field 5 (B) must NOT be supported for Spectrum Cycle");
+
+    // But Preset (field 2) must be supported
+    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 2), "Field 2 (Preset) must be supported");
+}
+
+
 
 

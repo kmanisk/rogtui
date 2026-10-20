@@ -111,10 +111,12 @@ pub fn is_aura_field_supported<B: Backend>(app: &AppState<B>, field: usize) -> b
     let is_animated = mode_idx == 4 || mode_idx == 5 || mode_idx == 6 || mode_idx == 7 || mode_idx == 9 || is_firmware_breathe || is_firmware_rainbow;
     let is_voice_pulse = app.active_software_effect == SoftwareEffect::VoicePulse;
     let has_direction = mode_idx == 4 || is_firmware_rainbow;
+    let is_custom_color = get_active_preset_name(app.aura_data.color1) == "Custom" || app.hex_input_buffer.is_some();
 
     match field {
         0 | 1 | 9..=12 => true,
-        2..=5 => supports_custom_color(app),
+        2 => supports_custom_color(app),
+        3..=5 => supports_custom_color(app) && is_custom_color,
         6 => is_firmware_breathe,
         7 => is_animated || is_voice_pulse,
         8 => has_direction,
@@ -249,60 +251,61 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             let preset_spans = choice_widget(preset_name, app.aura_selected_field == 2, theme);
             lines.push(label_value_row("Preset", preset_spans, app.aura_selected_field == 2, label_width, theme));
 
-            // Row: Custom hex with 2-char block preview
-            let hex_str = if is_spectrum {
-                "Dynamic Hue".to_string()
-            } else if let Some(buf) = &app.hex_input_buffer {
-                format!("#{buf}_")
-            } else {
-                col.to_hex()
-            };
-            let hex_spans = vec![
-                Span::styled(format!("{hex_str: <9}"), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
-                Span::styled("  ██  ", Style::default().fg(swatch_color)),
-                Span::styled("c", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled(" picker  ", Style::default().fg(theme.dim)),
-                Span::styled("#", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-                Span::styled(" hex", Style::default().fg(theme.dim)),
-            ];
-            lines.push(label_value_row("Custom hex", hex_spans, false, label_width, theme));
+            // Custom hex and R / G / B sliders only when Custom color is active
+            if is_aura_field_supported(app, 3) {
+                // Row: Custom hex with 2-char block preview
+                let hex_str = if let Some(buf) = &app.hex_input_buffer {
+                    format!("#{buf}_")
+                } else {
+                    col.to_hex()
+                };
+                let hex_spans = vec![
+                    Span::styled(format!("{hex_str: <9}"), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+                    Span::styled("  ██  ", Style::default().fg(swatch_color)),
+                    Span::styled("c", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+                    Span::styled(" picker  ", Style::default().fg(theme.dim)),
+                    Span::styled("#", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
+                    Span::styled(" hex", Style::default().fg(theme.dim)),
+                ];
+                lines.push(label_value_row("Custom hex", hex_spans, false, label_width, theme));
 
-            // R / G / B sliders tinted with respective colors
-            let r_slider = slider_widget_tinted(
-                col.r as u32,
-                0,
-                255,
-                16,
-                "",
-                app.aura_selected_field == 3,
-                Some(Color::Rgb(220, 80, 80)),
-                theme,
-            );
-            lines.push(label_value_row("R", r_slider, app.aura_selected_field == 3, label_width, theme));
+                // R / G / B sliders tinted with respective colors
+                let r_slider = slider_widget_tinted(
+                    col.r as u32,
+                    0,
+                    255,
+                    16,
+                    "",
+                    app.aura_selected_field == 3,
+                    Some(Color::Rgb(220, 80, 80)),
+                    theme,
+                );
+                lines.push(label_value_row("R", r_slider, app.aura_selected_field == 3, label_width, theme));
 
-            let g_slider = slider_widget_tinted(
-                col.g as u32,
-                0,
-                255,
-                16,
-                "",
-                app.aura_selected_field == 4,
-                Some(Color::Rgb(80, 200, 80)),
-                theme,
-            );
-            lines.push(label_value_row("G", g_slider, app.aura_selected_field == 4, label_width, theme));
+                let g_slider = slider_widget_tinted(
+                    col.g as u32,
+                    0,
+                    255,
+                    16,
+                    "",
+                    app.aura_selected_field == 4,
+                    Some(Color::Rgb(80, 200, 80)),
+                    theme,
+                );
+                lines.push(label_value_row("G", g_slider, app.aura_selected_field == 4, label_width, theme));
 
-            let b_slider = slider_widget_tinted(
-                col.b as u32,
-                0,
-                255,
-                16,
-                "",
-                app.aura_selected_field == 5,
-                Some(Color::Rgb(80, 130, 240)),
-                theme,
-            );
-            lines.push(label_value_row("B", b_slider, app.aura_selected_field == 5, label_width, theme));
+                let b_slider = slider_widget_tinted(
+                    col.b as u32,
+                    0,
+                    255,
+                    16,
+                    "",
+                    app.aura_selected_field == 5,
+                    Some(Color::Rgb(80, 130, 240)),
+                    theme,
+                );
+                lines.push(label_value_row("B", b_slider, app.aura_selected_field == 5, label_width, theme));
+            }
         }
 
         // Secondary Color if supported (e.g. Breathe)

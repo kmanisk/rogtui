@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// These write static colors to the keyboard via the asusd DBus interface.
 /// They are distinct from hardware/firmware effects (Static, Breathe, Rainbow Cycle, Pulse)
 /// and only active while brightness > 0 and the effect is selected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SoftwareEffect {
     None,
     // Custom Animations

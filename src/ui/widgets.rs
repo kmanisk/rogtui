@@ -620,7 +620,7 @@ pub fn render_confirm_modal(f: &mut Frame, prompt: &str, area: Rect, theme: &The
         Line::from(Span::styled(prompt.to_string(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD))),
         Line::from(""),
         Line::from(vec![
-            Span::styled("y", Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)),
+            Span::styled("Enter / y", Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)),
             Span::styled(" Confirm   ·   ", Style::default().fg(theme.dim)),
             Span::styled("n / Esc", Style::default().fg(theme.err).add_modifier(Modifier::BOLD)),
             Span::styled(" Cancel", Style::default().fg(theme.dim)),

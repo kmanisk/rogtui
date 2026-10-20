@@ -1254,32 +1254,24 @@ impl<B: Backend> AppState<B> {
             self.aura_data.color1
         };
 
-        if self.aura_brightness == 1 {
-            if level == 0 {
-                RgbColor::new(0, 0, 0)
-            } else {
-                let mult = (level as f32 / 100.0).clamp(0.4, 1.0);
-                RgbColor::new(
-                    (c.r as f32 * mult) as u8,
-                    (c.g as f32 * mult) as u8,
-                    (c.b as f32 * mult) as u8,
-                )
-            }
-        } else if level == 0 {
-            // Resting ambient glow
-            RgbColor::new(
-                (c.r as f32 * 0.15) as u8,
-                (c.g as f32 * 0.15) as u8,
-                (c.b as f32 * 0.15) as u8,
-            )
+        let (min_mult, max_mult) = match self.aura_brightness {
+            1 => (0.00, 0.40),
+            2 => (0.05, 0.70),
+            _ => (0.00, 1.00), // Max/High brightness (3): uses all levels from 0.0 to 1.0
+        };
+
+        let ratio = (level as f32 / 100.0).clamp(0.0, 1.0);
+        let mult = if level == 0 {
+            min_mult
         } else {
-            let mult = 0.15 + 0.85 * (level as f32 / 100.0);
-            RgbColor::new(
-                (c.r as f32 * mult).min(255.0) as u8,
-                (c.g as f32 * mult).min(255.0) as u8,
-                (c.b as f32 * mult).min(255.0) as u8,
-            )
-        }
+            min_mult + (max_mult - min_mult) * ratio
+        };
+
+        RgbColor::new(
+            (c.r as f32 * mult).clamp(0.0, 255.0) as u8,
+            (c.g as f32 * mult).clamp(0.0, 255.0) as u8,
+            (c.b as f32 * mult).clamp(0.0, 255.0) as u8,
+        )
     }
 
     /// Audio Pulse: Sound output reactive visualizer via non-blocking worker.
@@ -1306,31 +1298,24 @@ impl<B: Backend> AppState<B> {
             self.aura_data.color1
         };
 
-        if self.aura_brightness == 1 {
-            if level == 0 {
-                RgbColor::new(0, 0, 0)
-            } else {
-                let mult = (level as f32 / 100.0).clamp(0.4, 1.0);
-                RgbColor::new(
-                    (c.r as f32 * mult) as u8,
-                    (c.g as f32 * mult) as u8,
-                    (c.b as f32 * mult) as u8,
-                )
-            }
-        } else if level == 0 {
-            RgbColor::new(
-                (c.r as f32 * 0.12) as u8,
-                (c.g as f32 * 0.12) as u8,
-                (c.b as f32 * 0.12) as u8,
-            )
+        let (min_mult, max_mult) = match self.aura_brightness {
+            1 => (0.00, 0.40),
+            2 => (0.05, 0.70),
+            _ => (0.00, 1.00), // Max/High brightness (3): uses all levels from 0.0 to 1.0
+        };
+
+        let ratio = (level as f32 / 100.0).clamp(0.0, 1.0);
+        let mult = if level == 0 {
+            min_mult
         } else {
-            let mult = 0.12 + 0.88 * (level as f32 / 100.0);
-            RgbColor::new(
-                (c.r as f32 * mult).min(255.0) as u8,
-                (c.g as f32 * mult).min(255.0) as u8,
-                (c.b as f32 * mult).min(255.0) as u8,
-            )
-        }
+            min_mult + (max_mult - min_mult) * ratio
+        };
+
+        RgbColor::new(
+            (c.r as f32 * mult).clamp(0.0, 255.0) as u8,
+            (c.g as f32 * mult).clamp(0.0, 255.0) as u8,
+            (c.b as f32 * mult).clamp(0.0, 255.0) as u8,
+        )
     }
 
     /// Audio Wave: Dynamic audio spectrum EQ via non-blocking worker.

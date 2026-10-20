@@ -1,4 +1,5 @@
 use rogtui::{app, backend, handler, ui};
+use rogtui::backend::Backend;
 use rogtui::backend::types::SoftwareEffect;
 
 use std::env;
@@ -31,6 +32,8 @@ fn print_usage() {
     println!("  --mock        Run with simulated mock hardware (for testing without daemons)");
     println!("  --no-color    Disable ANSI color sequences (monochrome mode)");
     println!("  --ascii       Use pure ASCII box-drawing characters");
+    println!("  --daemon      Run active software RGB effect headless in background");
+    println!("  --close, -c   Stop persistent background RGB daemon and reset keyboard");
     println!("  -h, --help    Display this help message");
     println!("  -v, -V, --version Display version information");
 }
@@ -130,6 +133,24 @@ fn main() -> anyhow::Result<()> {
         .enable_all()
         .build()?;
 
+    if args.iter().any(|a| a == "--close" || a == "-c" || a == "close") {
+        let stopped = rogtui::daemon::stop_daemon().unwrap_or(false);
+        rt.block_on(async {
+            if let Ok(backend) = RealBackend::connect().await {
+                let _ = backend.write_volatile_rgb(rogtui::backend::types::RgbColor::new(0, 0, 0)).await;
+            }
+        });
+        if stopped {
+            println!("[ok] Persistent background RGB daemon stopped. Keyboard lighting reset.");
+        } else {
+            println!("[ok] No background RGB daemon was running.");
+        }
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--daemon") {
+        return rt.block_on(rogtui::daemon::run_daemon());
+    }
+
     if args.iter().any(|a| a == "--check") {
         return rt.block_on(run_check());
     }
@@ -189,6 +210,20 @@ async fn app_loop<B: backend::Backend>(
     let mut app = AppState::new(backend).await?;
     if no_color {
         app.theme = Theme::monochrome();
+    }
+
+    // If background RGB daemon was running, adopt its state and stop daemon process
+    if rogtui::daemon::is_daemon_running().is_some() {
+        if let Some(state) = rogtui::daemon::load_state() {
+            app.active_software_effect = state.effect;
+            app.aura_brightness = state.brightness;
+            app.aura_data.speed = state.speed;
+            app.aura_data.color1 = state.color1;
+            app.aura_data.color2 = state.color2;
+            app.voice_sensitivity = state.voice_sensitivity;
+            app.user_custom_color = true;
+        }
+        let _ = rogtui::daemon::stop_daemon();
     }
 
     let mut event_reader = EventStream::new();
@@ -278,6 +313,15 @@ async fn app_loop<B: backend::Backend>(
                 }
             }
         }
+    }
+
+    // If a software RGB effect was active, persist it in the background
+    if app.active_software_effect != SoftwareEffect::None && app.aura_brightness > 0 {
+        if let Ok(()) = rogtui::daemon::save_state(&app) {
+            rogtui::daemon::spawn_daemon_process();
+        }
+    } else {
+        let _ = rogtui::daemon::stop_daemon();
     }
 
     Ok(())

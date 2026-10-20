@@ -13,10 +13,10 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         return;
     }
 
-    // 2. If confirmation modal is open, handle y/n/Esc
+    // 2. If confirmation modal is open, handle y/n/Esc/Enter
     if let Some((_, action)) = app.confirm_modal.clone() {
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                 match action {
                     ConfirmAction::SwitchGpu(mode) => {
                         match app.backend.set_gpu_mode(mode).await {

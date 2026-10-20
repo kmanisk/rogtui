@@ -306,12 +306,12 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         theme,
     ));
     let cpu_detail = if let Some(w) = app.sensors.cpu_power_w {
-        format!("{cpu_name}   ·   {w:.0} W")
+        format!("{cpu_name: <23}   ·   {w:>2.0} W")
     } else {
         cpu_name.to_string()
     };
     lines.push(Line::from(vec![
-        Span::raw("            "),
+        Span::raw("  "),
         Span::styled(cpu_detail, Style::default().fg(theme.dim)),
     ]));
     for _ in 0..spacers[0] {
@@ -363,14 +363,14 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         theme,
     ));
     let gpu_detail = if is_suspended {
-        "RTX 5050 Mobile   ·   D3cold (0 W)".to_string()
+        format!("{gpu_name: <23}   ·   D3cold (0 W)", gpu_name = "RTX 5050 Mobile")
     } else if let Some(w) = app.sensors.gpu_power_w {
-        format!("RTX 5050 Mobile   ·   {w:.0} W")
+        format!("{gpu_name: <23}   ·   {w:>2.0} W", gpu_name = "RTX 5050 Mobile")
     } else {
         "RTX 5050 Mobile".to_string()
     };
     lines.push(Line::from(vec![
-        Span::raw("            "),
+        Span::raw("  "),
         Span::styled(gpu_detail, Style::default().fg(theme.dim)),
     ]));
     for _ in 0..spacers[1] {
@@ -475,7 +475,7 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
 
     let health_pct = app.sensors.battery_health_percent.unwrap_or(98);
     let mut bat_details = vec![
-        Span::raw("            "),
+        Span::raw("  "),
         Span::styled(format!("Limit {}%", app.charge_limit), Style::default().fg(theme.dim)),
         Span::styled("   ·   ", Style::default().fg(Color::Rgb(70, 75, 85))),
         Span::styled(format!("Health {}%", health_pct), Style::default().fg(theme.dim)),
