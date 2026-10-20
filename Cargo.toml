@@ -1,13 +1,13 @@
 [package]
 name = "rogtui"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Kumar Manisk <mathewmanisk699@gmail.com>"]
 description = "Fast, minimal, hardware-direct TUI for ASUS ROG and TUF gaming laptops"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/manisk/rogtui"
-homepage = "https://github.com/manisk/rogtui"
+repository = "https://github.com/kmanisk/rogtui"
+homepage = "https://github.com/kmanisk/rogtui"
 documentation = "https://docs.rs/rogtui"
 keywords = ["asus", "rog", "tuf", "tui", "hardware"]
 categories = ["command-line-utilities", "hardware-support"]
