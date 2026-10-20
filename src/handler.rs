@@ -909,7 +909,6 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
                 return;
             }
             if app.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
-                || !app.user_custom_color
                 || app.aura_data.color1 == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE
             {
                 let (_, sys_col) = crate::ui::theme::Theme::get_system_theme_color();
@@ -949,6 +948,7 @@ async fn activate_software_mode<B: Backend>(app: &mut AppState<B>, effect: Softw
     app.aura_data.mode = 0;
     let _ = app.backend.set_aura_mode(0).await;
     app.apply_software_effect().await;
+    let _ = crate::daemon::save_state(app);
     app.set_status(status_msg, false);
 }
 
@@ -1067,7 +1067,10 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
                 let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
                 let _ = app.backend.set_aura_mode(app.aura_mode).await;
+            } else {
+                app.apply_software_effect().await;
             }
+            let _ = crate::daemon::save_state(app);
             let preset_name = presets[next_pos].0;
             app.set_status(format!("Preset applied: {}", preset_name), false);
         }
@@ -1079,7 +1082,10 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
                 let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            } else {
+                app.apply_software_effect().await;
             }
+            let _ = crate::daemon::save_state(app);
         }
         4 => {
             let g = (app.aura_data.color1.g as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
@@ -1089,7 +1095,10 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
                 let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            } else {
+                app.apply_software_effect().await;
             }
+            let _ = crate::daemon::save_state(app);
         }
         5 => {
             let b = (app.aura_data.color1.b as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
@@ -1099,7 +1108,10 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
                 let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            } else {
+                app.apply_software_effect().await;
             }
+            let _ = crate::daemon::save_state(app);
         }
         6 => {
             let presets = crate::ui::aura::get_static_color_presets();

@@ -283,8 +283,7 @@ async fn app_loop<B: backend::Backend>(
                 let did_reload_theme = if !no_color {
                     let reloaded = app.check_and_reload_system_theme();
                     let is_dynamic_active = app.active_software_effect == SoftwareEffect::ThemeSync
-                        || app.aura_data.color1 == rogtui::ui::aura::SENTINEL_DYNAMIC_THEME
-                        || !app.user_custom_color;
+                        || app.aura_data.color1 == rogtui::ui::aura::SENTINEL_DYNAMIC_THEME;
                     if reloaded && is_dynamic_active {
                         app.apply_software_effect().await;
                     }

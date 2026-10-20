@@ -1492,6 +1492,89 @@ async fn test_audio_multi_band_beats_vocals_high_and_low() {
     assert_eq!(silent_col.b, 0);
 }
 
+#[tokio::test]
+async fn test_audio_pulse_preserves_last_used_color_and_preset() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+
+    // 1. User sets Static mode with Red preset
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::None;
+    app.aura_mode = 0;
+    app.aura_data.color1 = rogtui::backend::types::RgbColor::new(255, 0, 0);
+
+    // 2. User switches to Audio Pulse via key handler
+    app.aura_selected_field = 1; // Mode field
+    // Cycle to Audio Pulse (mode index 11)
+    for _ in 0..11 {
+        let key_right = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Right,
+            crossterm::event::KeyModifiers::empty(),
+        );
+        rogtui::handler::handle_key_event(&mut app, key_right).await;
+    }
+    assert_eq!(app.active_software_effect, rogtui::backend::types::SoftwareEffect::AudioPulse);
+
+    // 3. Audio Pulse MUST preserve Red, not get reset to cyan or custom!
+    assert_eq!(
+        app.aura_data.color1,
+        rogtui::backend::types::RgbColor::new(255, 0, 0),
+        "Switching to AudioPulse must preserve previous active color (Red)"
+    );
+    assert_eq!(
+        rogtui::ui::aura::get_active_preset_name(app.aura_data.color1),
+        "Red",
+        "Active preset name must remain 'Red', never get reverted to 'Custom'"
+    );
+
+    // 4. Compute Audio Pulse: must use Red, not system theme cyan
+    app.audio_service.set_audio_level(80);
+    app.audio_service.set_bass_level(40);
+    app.audio_service.set_mid_level(40);
+    let pulse_col = app.compute_audio_pulse_color();
+    assert!(pulse_col.r > 100, "Red channel must dominate for Red preset, got r={}", pulse_col.r);
+    assert_eq!(pulse_col.b, 0, "Blue channel must be 0 for pure Red preset (not cyan)");
+
+    // 5. User changes preset in Audio Pulse to Sunset Amber
+    app.aura_selected_field = 2; // Preset field
+    let key_space = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char(' '),
+        crossterm::event::KeyModifiers::empty(),
+    );
+    // Find Sunset Amber
+    for _ in 0..12 {
+        if rogtui::ui::aura::get_active_preset_name(app.aura_data.color1) == "Sunset Amber" {
+            break;
+        }
+        rogtui::handler::handle_key_event(&mut app, key_space).await;
+    }
+    assert_eq!(
+        rogtui::ui::aura::get_active_preset_name(app.aura_data.color1),
+        "Sunset Amber"
+    );
+
+    // 6. Switching to another mode and back preserves Sunset Amber
+    app.aura_selected_field = 1;
+    let key_left = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Left,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_left).await; // VoicePulse
+    let key_right = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Right,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_right).await; // Back to AudioPulse
+
+    assert_eq!(
+        rogtui::ui::aura::get_active_preset_name(app.aura_data.color1),
+        "Sunset Amber",
+        "Re-entering AudioPulse must retain Sunset Amber"
+    );
+}
+
+
 
 
 

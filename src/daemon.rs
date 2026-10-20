@@ -182,8 +182,7 @@ pub async fn run_daemon() -> Result<()> {
                 }
 
                 let is_dynamic_theme = app.active_software_effect == SoftwareEffect::ThemeSync
-                    || app.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
-                    || !app.user_custom_color;
+                    || app.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME;
 
                 if is_dynamic_theme {
                     let reloaded = app.check_and_reload_system_theme();

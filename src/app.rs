@@ -804,6 +804,13 @@ impl<B: Backend> AppState<B> {
         };
         let last_ac_online = Some(crate::backend::real::is_ac_online());
 
+        let init_col = if aura_data.color1.r != 0 || aura_data.color1.g != 0 || aura_data.color1.b != 0 {
+            aura_data.color1
+        } else {
+            RgbColor::new(255, 0, 0)
+        };
+        let (init_h, init_s, init_v) = init_col.to_hsv();
+
         Ok(Self {
             backend,
             theme: Theme::load_or_default(),
@@ -849,10 +856,10 @@ impl<B: Backend> AppState<B> {
             show_color_picker_modal: false,
             picker_target_slot: 1,
             picker_slider_idx: 0,
-            picker_hue: 180.0,
-            picker_sat: 100.0,
-            picker_val: 100.0,
-            picker_initial_color: RgbColor::new(0, 200, 255),
+            picker_hue: init_h,
+            picker_sat: init_s,
+            picker_val: init_v,
+            picker_initial_color: init_col,
             active_software_effect: SoftwareEffect::None,
             last_effect_color: None,
             rainbow_wave_hue: 0.0,
@@ -1326,7 +1333,6 @@ impl<B: Backend> AppState<B> {
                 self.spectrum_pulse_hue = (self.spectrum_pulse_hue + 25.0) % 360.0;
                 RgbColor::from_hsv(self.spectrum_pulse_hue, 100.0, 100.0)
             } else if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
-                || !self.user_custom_color
                 || (self.aura_data.color1.r == 0
                     && self.aura_data.color1.g == 0
                     && self.aura_data.color1.b == 0)
@@ -1393,7 +1399,6 @@ impl<B: Backend> AppState<B> {
             self.spectrum_pulse_hue = (self.spectrum_pulse_hue + hue_step) % 360.0;
             RgbColor::from_hsv(self.spectrum_pulse_hue, 100.0, 100.0)
         } else if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
-            || !self.user_custom_color
             || (self.aura_data.color1.r == 0
                 && self.aura_data.color1.g == 0
                 && self.aura_data.color1.b == 0)
@@ -1474,7 +1479,6 @@ impl<B: Backend> AppState<B> {
             RgbColor::from_hsv(self.spectrum_pulse_hue, sat, val)
         } else {
             let base_col = if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
-                || !self.user_custom_color
                 || (self.aura_data.color1.r == 0
                     && self.aura_data.color1.g == 0
                     && self.aura_data.color1.b == 0)
