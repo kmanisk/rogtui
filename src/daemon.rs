@@ -134,7 +134,7 @@ pub async fn run_daemon() -> Result<()> {
     app.aura_data.color1 = state.color1;
     app.aura_data.color2 = state.color2;
     app.voice_sensitivity = state.voice_sensitivity;
-    app.user_custom_color = true;
+    app.user_custom_color = state.color1 != crate::ui::aura::SENTINEL_DYNAMIC_THEME;
 
     let effect_interval = match app.active_software_effect {
         SoftwareEffect::VoicePulse
@@ -183,7 +183,11 @@ pub async fn run_daemon() -> Result<()> {
                     last_sensor_time = now;
                 }
 
-                if app.active_software_effect == SoftwareEffect::ThemeSync {
+                let is_dynamic_theme = app.active_software_effect == SoftwareEffect::ThemeSync
+                    || app.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
+                    || !app.user_custom_color;
+
+                if is_dynamic_theme {
                     let reloaded = app.check_and_reload_system_theme();
                     if reloaded {
                         app.apply_software_effect().await;

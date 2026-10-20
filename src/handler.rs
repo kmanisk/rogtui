@@ -225,11 +225,13 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                     app.aura_data.color2 = chosen;
                 } else {
                     app.aura_data.color1 = chosen;
+                    app.user_custom_color = true;
                 }
                 if app.aura_mode == 0 && app.aura_brightness > 0 {
                     let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
                 } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
                     let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    let _ = app.backend.set_aura_mode(app.aura_mode).await;
                 }
                 app.show_color_picker_modal = false;
                 app.set_status(format!("Applied {} to Slot {}", chosen.to_hex(), app.picker_target_slot), false);
@@ -938,7 +940,8 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
     }
     match app.aura_selected_field {
         0 => {
-            let b = (app.aura_brightness as i32 + dir).clamp(0, 3) as u32;
+            let prev_b = app.aura_brightness;
+            let b = (prev_b as i32 + dir).clamp(0, 3) as u32;
             app.aura_brightness = b;
             let _ = app.backend.set_aura_brightness(b).await;
             if b == 0 {
@@ -951,15 +954,24 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 app.last_effect_color = None;
                 let _ = app.backend.write_volatile_rgb(RgbColor::new(0, 0, 0)).await;
             } else {
-                if let Some(saved) = app.saved_software_effect.take() {
-                    app.active_software_effect = saved;
+                if prev_b == 0 {
+                    if let Some(saved) = app.saved_software_effect.take() {
+                        app.active_software_effect = saved;
+                    }
                 }
-                if app.active_software_effect == SoftwareEffect::None && app.aura_mode == 0 {
-                    let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                app.last_effect_color = None;
+                if app.active_software_effect == SoftwareEffect::None {
+                    let _ = app.backend.set_aura_mode(app.aura_mode).await;
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    if app.aura_mode == 0 {
+                        let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                    }
                 } else {
                     app.apply_software_effect().await;
                 }
             }
+            let b_names = ["Off", "Low", "Med", "High"];
+            app.set_status(format!("Aura Brightness: {}", b_names[b as usize]), false);
         }
         1 => {
             let current_idx = crate::ui::aura::get_current_mode_index(app) as i32;
@@ -1022,19 +1034,20 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             }
         }
         2 => {
-            let presets = crate::ui::aura::get_color_presets();
+            let presets = crate::ui::aura::get_presets_for_app(app);
             let cur_pos = presets.iter().position(|(_, p)| *p == app.aura_data.color1).unwrap_or(0);
             let count = presets.len() as i32;
             let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
             app.aura_data.color1 = presets[next_pos].1;
-            app.user_custom_color = next_pos != 0;
+            app.user_custom_color = presets[next_pos].1 != crate::ui::aura::SENTINEL_DYNAMIC_THEME;
             if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
                 let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                let _ = app.backend.set_aura_mode(app.aura_mode).await;
             }
             let preset_name = presets[next_pos].0;
-            app.set_status(format!("Preset applied: {} ({})", preset_name, app.aura_data.color1.to_hex()), false);
+            app.set_status(format!("Preset applied: {}", preset_name), false);
         }
         3 => {
             let r = (app.aura_data.color1.r as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
@@ -1067,7 +1080,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             }
         }
         6 => {
-            let presets = crate::ui::aura::get_color_presets();
+            let presets = crate::ui::aura::get_static_color_presets();
             let cur_pos = presets.iter().position(|(_, p)| *p == app.aura_data.color2).unwrap_or(0);
             let count = presets.len() as i32;
             let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
@@ -1197,6 +1210,7 @@ async fn adjust_picker_slider<B: Backend>(app: &mut AppState<B>, dir: i32) {
         app.aura_data.color2 = cur;
     } else {
         app.aura_data.color1 = cur;
+        app.user_custom_color = true;
     }
     if app.aura_mode == 0 && app.aura_brightness > 0 && app.picker_target_slot == 1 {
         let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;

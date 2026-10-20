@@ -221,7 +221,10 @@ async fn app_loop<B: backend::Backend>(
             app.aura_data.color1 = state.color1;
             app.aura_data.color2 = state.color2;
             app.voice_sensitivity = state.voice_sensitivity;
-            app.user_custom_color = true;
+            app.user_custom_color = state.color1 != rogtui::ui::aura::SENTINEL_DYNAMIC_THEME;
+            if app.aura_brightness == 0 && app.active_software_effect != SoftwareEffect::None {
+                app.saved_software_effect = Some(app.active_software_effect);
+            }
         }
         let _ = rogtui::daemon::stop_daemon();
     }
@@ -276,7 +279,10 @@ async fn app_loop<B: backend::Backend>(
                 // Hot reload dynamic theme from colors.sh
                 let did_reload_theme = if !no_color {
                     let reloaded = app.check_and_reload_system_theme();
-                    if reloaded && app.active_software_effect == SoftwareEffect::ThemeSync {
+                    let is_dynamic_active = app.active_software_effect == SoftwareEffect::ThemeSync
+                        || app.aura_data.color1 == rogtui::ui::aura::SENTINEL_DYNAMIC_THEME
+                        || !app.user_custom_color;
+                    if reloaded && is_dynamic_active {
                         app.apply_software_effect().await;
                     }
                     reloaded

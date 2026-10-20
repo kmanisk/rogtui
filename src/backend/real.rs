@@ -111,6 +111,12 @@ pub trait Aura {
     fn set_brightness(&self, value: u32) -> zbus::Result<()>;
 
     #[zbus(property)]
+    fn device_type(&self) -> zbus::Result<u32>;
+
+    #[zbus(property)]
+    fn supported_basic_zones(&self) -> zbus::Result<Vec<u32>>;
+
+    #[zbus(property)]
     fn supported_brightness(&self) -> zbus::Result<Vec<u32>>;
 
     #[zbus(property)]
@@ -512,6 +518,15 @@ impl super::Backend for RealBackend {
         let _ = self.aura.set_led_mode(0).await;
         self.aura.set_led_mode_data(raw).await?;
         Ok(())
+    }
+
+    async fn get_multizone_supported(&self) -> anyhow::Result<bool> {
+        let dev_type = self.aura.device_type().await.unwrap_or(0);
+        if dev_type == 2 {
+            return Ok(false); // TUF is single-zone only
+        }
+        let zones = self.aura.supported_basic_zones().await.unwrap_or_default();
+        Ok(zones.len() > 1)
     }
 
     async fn get_gpu_mode(&self) -> anyhow::Result<GpuMode> {

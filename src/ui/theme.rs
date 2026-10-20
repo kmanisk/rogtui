@@ -80,56 +80,97 @@ impl Theme {
     }
 
     /// Read the active desktop theme dynamically from system configs:
-    /// ~/.local/state/theme/colors.sh, ~/.cache/wal/colors.json, Hyprland borders, Sway borders, or terminal palettes.
-    /// Evaluates color vibrancy (chroma, saturation, luminosity) to choose the most vivid,
-    /// striking accent color for physical keyboard backlighting rather than dull or washed-out tones.
+    /// ~/.local/state/theme/colors.sh, sway borders, Hyprland borders, or pywal.
+    /// Prioritizes designated theme accents (e.g. THEME_ACCENT or focused border),
+    /// resolves light theme neutral fallbacks, and boosts saturation/luminance so
+    /// physical keyboard LED backlighting pops vividly without washing out.
     pub fn read_system_theme() -> (String, RgbColor) {
-        let mut candidates: Vec<RgbColor> = Vec::new();
         let mut theme_name = "Theme".to_string();
 
         if let Ok(home) = std::env::var("HOME") {
             let home_path = PathBuf::from(home);
 
-            // 1. Check colors.sh
+            // 1. Primary: Parse ~/.local/state/theme/colors.sh
             let colors_sh = home_path.join(".local/state/theme/colors.sh");
             if let Ok(content) = fs::read_to_string(&colors_sh) {
+                let mut theme_accent: Option<RgbColor> = None;
+                let mut fallback_colors: Vec<RgbColor> = Vec::new();
+
                 for line in content.lines() {
                     let trimmed = line.trim();
                     if let Some(n) = trimmed.strip_prefix("export THEME_NAME=") {
-                        theme_name = n.trim_matches('"').to_string();
-                    } else if let Some(val) = trimmed.split('=').nth(1) {
-                        let hex = val.trim_matches('"').trim_matches('\'').trim();
+                        theme_name = n.trim_matches('"').trim_matches('\'').to_string();
+                    } else if let Some(n) = trimmed.strip_prefix("export THEME_ACCENT=") {
+                        let hex = n.trim_matches('"').trim_matches('\'').trim();
                         if let Ok(col) = RgbColor::from_hex(hex) {
-                            candidates.push(col);
+                            theme_accent = Some(col);
+                        }
+                    } else if trimmed.starts_with("export THEME_BLUE=")
+                        || trimmed.starts_with("export THEME_CYAN=")
+                        || trimmed.starts_with("export THEME_PURPLE=")
+                        || trimmed.starts_with("export THEME_TEAL=")
+                        || trimmed.starts_with("export THEME_GREEN=")
+                        || trimmed.starts_with("export THEME_RED=")
+                    {
+                        if let Some(val) = trimmed.split('=').nth(1) {
+                            let hex = val.trim_matches('"').trim_matches('\'').trim();
+                            if let Ok(col) = RgbColor::from_hex(hex) {
+                                fallback_colors.push(col);
+                            }
                         }
                     }
                 }
+
+                // If THEME_ACCENT is valid and not washed out (sat >= 18%), use it directly!
+                if let Some(accent) = theme_accent {
+                    let (_, s, v) = accent.to_hsv();
+                    if s >= 18.0 && v >= 20.0 {
+                        return (theme_name, Self::boost_for_backlight(accent));
+                    }
+                }
+
+                // For light/neutral themes where THEME_ACCENT is near-gray (sat < 18%),
+                // select the best vibrant primary color from the theme's palette.
+                for col in fallback_colors {
+                    let (_, s, v) = col.to_hsv();
+                    if s >= 20.0 && v >= 25.0 {
+                        return (theme_name, Self::boost_for_backlight(col));
+                    }
+                }
+
+                // If THEME_ACCENT existed even if low saturation, use it rather than hardcoded default
+                if let Some(accent) = theme_accent {
+                    return (theme_name, Self::boost_for_backlight(accent));
+                }
             }
 
-            // 2. Check pywal cache (common for Hyprland / BSPWM / Sway)
-            let wal_cache = home_path.join(".cache/wal/colors.sh");
-            if candidates.is_empty() {
-                if let Ok(content) = fs::read_to_string(&wal_cache) {
-                    theme_name = "Pywal".to_string();
-                    for line in content.lines() {
-                        if let Some(val) = line.trim().split('=').nth(1) {
-                            let hex = val.trim_matches('\'').trim_matches('"').trim();
-                            if let Ok(col) = RgbColor::from_hex(hex) {
-                                candidates.push(col);
-                            }
-                        }
+            // 2. Check ~/.local/state/theme/folder_accent or sway.conf
+            let folder_accent = home_path.join(".local/state/theme/folder_accent");
+            if let Ok(content) = fs::read_to_string(&folder_accent) {
+                if let Ok(col) = RgbColor::from_hex(content.trim()) {
+                    let (_, s, v) = col.to_hsv();
+                    if s >= 15.0 && v >= 20.0 {
+                        return (theme_name, Self::boost_for_backlight(col));
                     }
                 }
             }
 
             // 3. Check Sway borders
-            let sway_theme = home_path.join(".config/sway/config.d/80-theme-colors.conf");
+            let sway_conf = home_path.join(".local/state/theme/sway.conf");
+            let sway_theme = if sway_conf.exists() {
+                sway_conf
+            } else {
+                home_path.join(".config/sway/config.d/80-theme-colors.conf")
+            };
             if let Ok(content) = fs::read_to_string(&sway_theme) {
                 for line in content.lines() {
                     if line.starts_with("client.focused ") {
-                        for token in line.split_whitespace().skip(1) {
-                            if let Ok(col) = RgbColor::from_hex(token) {
-                                candidates.push(col);
+                        if let Some(first_tok) = line.split_whitespace().nth(1) {
+                            if let Ok(col) = RgbColor::from_hex(first_tok) {
+                                let (_, s, v) = col.to_hsv();
+                                if s >= 15.0 && v >= 20.0 {
+                                    return (theme_name, Self::boost_for_backlight(col));
+                                }
                             }
                         }
                     }
@@ -144,45 +185,50 @@ impl Theme {
                         for part in line.split(['(', ')', ' ', ',']) {
                             let clean = part.trim().trim_start_matches("rgba").trim_start_matches("rgb");
                             if let Ok(col) = RgbColor::from_hex(clean) {
-                                candidates.push(col);
+                                let (_, s, v) = col.to_hsv();
+                                if s >= 18.0 && v >= 20.0 {
+                                    return (theme_name, Self::boost_for_backlight(col));
+                                }
                             }
                         }
                     }
                 }
             }
+
+            // 5. Check pywal cache (common for Hyprland / BSPWM / Sway)
+            let wal_cache = home_path.join(".cache/wal/colors.sh");
+            if let Ok(content) = fs::read_to_string(&wal_cache) {
+                theme_name = "Pywal".to_string();
+                let mut wal_accent: Option<RgbColor> = None;
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    // In pywal, color4 is typically the primary accent blue
+                    if trimmed.starts_with("color4=") || trimmed.starts_with("accent=") {
+                        if let Some(val) = trimmed.split('=').nth(1) {
+                            let hex = val.trim_matches('\'').trim_matches('"').trim();
+                            if let Ok(col) = RgbColor::from_hex(hex) {
+                                wal_accent = Some(col);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some(col) = wal_accent {
+                    return (theme_name, Self::boost_for_backlight(col));
+                }
+            }
         }
 
-        // Score all candidates by perceived chroma and saturation
-        let mut best_col: Option<RgbColor> = None;
-        let mut best_score: f32 = 0.0;
+        ("Theme".to_string(), RgbColor::new(62, 193, 149))
+    }
 
-        for c in candidates {
-            let max = c.r.max(c.g).max(c.b) as f32;
-            let min = c.r.min(c.g).min(c.b) as f32;
-            if max == 0.0 {
-                continue;
-            }
-            let sat = (max - min) / max;
-            let val = max / 255.0;
-            // Reject near-black, near-white, or neutral grays
-            if val < 0.25 || (val > 0.94 && sat < 0.15) || sat < 0.18 {
-                continue;
-            }
-            let score = sat * sat * val * 100.0;
-            if score > best_score {
-                best_score = score;
-                best_col = Some(c);
-            }
-        }
-
-        if let Some(col) = best_col {
-            // Boost saturation by +25% so the backlight pops vividly
-            let (h, s, v) = col.to_hsv();
-            let boosted = RgbColor::from_hsv(h, (s + 25.0).clamp(0.0, 100.0), (v + 5.0).clamp(0.0, 100.0));
-            (theme_name, boosted)
-        } else {
-            ("Theme".to_string(), RgbColor::new(62, 193, 149))
-        }
+    /// Boost color saturation and value specifically for keyboard LED illumination
+    /// to avoid dull, muddy, or washed-out lighting.
+    fn boost_for_backlight(col: RgbColor) -> RgbColor {
+        let (h, s, v) = col.to_hsv();
+        let boosted_s = (s * 1.35 + 18.0).clamp(20.0, 100.0);
+        let boosted_v = v.max(85.0).clamp(0.0, 100.0);
+        RgbColor::from_hsv(h, boosted_s, boosted_v)
     }
 
     pub fn get_system_theme_color() -> (String, RgbColor) {

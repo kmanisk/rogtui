@@ -1010,7 +1010,13 @@ async fn test_breathe_primary_and_secondary_updates() {
     app.active_software_effect = rogtui::backend::types::SoftwareEffect::None;
 
     assert!(rogtui::ui::aura::is_aura_field_supported(&app, 2), "Primary color supported in Breathe");
-    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 6), "Secondary color supported in Breathe");
+    // On single-zone hardware (TUF / has_multizone_rgb == false), field 6 (Secondary color) must be hidden
+    app.has_multizone_rgb = false;
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 6), "Secondary color must be hidden on single-zone hardware");
+
+    // On multi-zone hardware (ROG multi-zone), field 6 must be enabled
+    app.has_multizone_rgb = true;
+    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 6), "Secondary color supported on multi-zone ROG in Breathe");
     assert!(rogtui::ui::aura::is_aura_field_supported(&app, 7), "Speed supported in Breathe");
 
     // Test secondary color update via handler
@@ -1032,6 +1038,162 @@ async fn test_breathe_primary_and_secondary_updates() {
     rogtui::handler::handle_key_event(&mut app, key_left).await;
     let data2 = app.backend.get_aura_mode_data().await.expect("aura mode data");
     assert_eq!(data2.color1, app.aura_data.color1, "Primary color must sync to backend");
+}
+
+#[tokio::test]
+async fn test_dynamic_theme_sentinel_and_static_mode_presets() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.aura_brightness = 3;
+
+    // 1. In Static mode, presets should NOT contain Dynamic Theme or Spectrum Cycle
+    app.aura_mode = 0;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::None;
+    let static_presets = rogtui::ui::aura::get_presets_for_app(&app);
+    for (name, col) in &static_presets {
+        assert_ne!(*name, "Dynamic Theme", "Static mode must not have Dynamic Theme");
+        assert_ne!(*name, "Spectrum Cycle", "Static mode must not have Spectrum Cycle");
+        assert_ne!(*col, rogtui::ui::aura::SENTINEL_DYNAMIC_THEME);
+        assert_ne!(*col, rogtui::ui::aura::SENTINEL_SPECTRUM_CYCLE);
+    }
+
+    // 2. In Software mode (e.g. AudioPulse), presets MUST contain Dynamic Theme and Spectrum Cycle
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioPulse;
+    let soft_presets = rogtui::ui::aura::get_presets_for_app(&app);
+    assert!(soft_presets.iter().any(|(name, _)| *name == "Dynamic Theme"));
+    assert!(soft_presets.iter().any(|(name, _)| *name == "Spectrum Cycle"));
+
+    // 3. Dynamic Theme sentinel is sticky and deterministic
+    assert_eq!(
+        rogtui::ui::aura::get_active_preset_name(rogtui::ui::aura::SENTINEL_DYNAMIC_THEME),
+        "Dynamic Theme",
+        "Sentinel must always resolve to Dynamic Theme"
+    );
+
+    // 4. Strobe mode with Spectrum Cycle cycles rainbow hues at full brightness (never dim red)
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::Strobe;
+    app.aura_data.color1 = rogtui::ui::aura::SENTINEL_SPECTRUM_CYCLE;
+    let strobe_on = app.compute_strobe_color();
+    assert!(
+        strobe_on.r > 10 || strobe_on.g > 10 || strobe_on.b > 10,
+        "Strobe with Spectrum Cycle must flash bright rainbow hues, not (1,1,1)"
+    );
+    let strobe_off = app.compute_strobe_color();
+    assert_eq!(strobe_off, rogtui::backend::types::RgbColor::new(0, 0, 0));
+
+    // 5. Brightness Off (0) to Low (1) applies mode immediately
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 0;
+    app.aura_selected_field = 0;
+    let key_right = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Right,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_right).await;
+    assert_eq!(app.aura_brightness, 1, "Brightness should increment from 0 to 1");
+    assert_eq!(app.active_software_effect, rogtui::backend::types::SoftwareEffect::Strobe);
+}
+
+#[tokio::test]
+async fn test_pulse_mode_color_picker_and_presets() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+    app.aura_mode = 10; // Firmware Pulse mode
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::None;
+
+    // Field 2 (Preset) must be supported in Pulse mode
+    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 2), "Preset supported in Pulse mode");
+
+    // Enter or 'c' on Field 2 opens the color picker modal
+    app.aura_selected_field = 2;
+    let key_c = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char('c'),
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_c).await;
+    assert!(app.show_color_picker_modal, "Pressing 'c' in Pulse mode must open Color Picker modal");
+
+    // Adjusting slider inside color picker must update color1 and sync to hardware
+    let key_right = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Right,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_right).await;
+    assert!(app.user_custom_color, "Adjusting color in picker sets user_custom_color");
+
+    // Enter applies the custom color and closes modal
+    let key_enter = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Enter,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_enter).await;
+    assert!(!app.show_color_picker_modal, "Pressing Enter closes color picker");
+    assert_eq!(app.aura_mode, 10, "Pulse mode remains active in backend");
+}
+
+#[tokio::test]
+async fn test_ambient_audio_sync_dynamic_modulation() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AmbientAudioSync;
+
+    // Base color from ambient screen (mock or default)
+    app.last_ambient_color = Some(rogtui::backend::types::RgbColor::new(0, 180, 255));
+
+    // When audio level is 0 at brightness 1, it drops to black/off
+    app.aura_brightness = 1;
+    app.audio_service.set_audio_level(0);
+    let col_silent = app.compute_ambient_audio_sync_color();
+    assert_eq!(col_silent, rogtui::backend::types::RgbColor::new(0, 0, 0), "Silence at brightness 1 results in off/black");
+
+    // When audio level hits 80%, brightness and energy pulse to full vibrancy
+    app.aura_brightness = 3;
+    app.audio_service.set_audio_level(80);
+    let col_loud = app.compute_ambient_audio_sync_color();
+    assert!(col_loud.r > 0 || col_loud.g > 0 || col_loud.b > 0, "Loud audio pulses ambient scene color vividly");
+}
+
+#[tokio::test]
+async fn test_tokyonight_theme_extraction_avoids_orange() {
+    let temp_dir = std::env::temp_dir().join(format!("rogtui_tokyo_test_{}", std::process::id()));
+    let state_theme_dir = temp_dir.join(".local/state/theme");
+    let _ = std::fs::create_dir_all(&state_theme_dir);
+
+    let colors_content = "export THEME_NAME=\"tokyonight\"\n\
+export THEME_TYPE=\"dark\"\n\
+export THEME_BG=\"#1a1b26\"\n\
+export THEME_FG=\"#a9b1d6\"\n\
+export THEME_ACCENT=\"#7aa2f7\"\n\
+export THEME_ORANGE=\"#ff9e64\"\n\
+export THEME_YELLOW=\"#e0af68\"\n\
+export THEME_BLUE=\"#7aa2f7\"\n\
+export THEME_PURPLE=\"#bb9af7\"\n\
+export THEME_CYAN=\"#7dcfff\"\n";
+    std::fs::write(state_theme_dir.join("colors.sh"), colors_content).expect("write colors.sh");
+
+    // Temporarily point HOME to temp_dir
+    let orig_home = std::env::var("HOME").ok();
+    std::env::set_var("HOME", &temp_dir);
+
+    let (theme_name, accent) = rogtui::ui::theme::Theme::read_system_theme();
+
+    if let Some(h) = orig_home {
+        std::env::set_var("HOME", h);
+    }
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    assert_eq!(theme_name, "tokyonight");
+    // Tokyo Night accent blue hue is ~221°, while orange is ~27°
+    let (h, _, _) = accent.to_hsv();
+    assert!(
+        (210.0..=230.0).contains(&h),
+        "Tokyo Night must extract primary accent blue hue ~221°, got hue {h} (orange would be ~27°)"
+    );
+    assert_ne!(accent, rogtui::backend::types::RgbColor::new(255, 158, 100)); // NOT orange
 }
 
 

@@ -45,6 +45,9 @@ pub trait Backend: Send + Sync + 'static {
     fn get_aura_power(&self) -> impl Future<Output = anyhow::Result<AuraPowerState>> + Send;
     fn set_aura_power(&self, power: &AuraPowerState) -> impl Future<Output = anyhow::Result<()>> + Send;
     fn write_volatile_rgb(&self, color: RgbColor) -> impl Future<Output = anyhow::Result<()>> + Send;
+    fn get_multizone_supported(&self) -> impl Future<Output = anyhow::Result<bool>> + Send {
+        async { Ok(false) }
+    }
 
     fn get_gpu_mode(&self) -> impl Future<Output = anyhow::Result<GpuMode>> + Send;
     fn get_gpu_supported(&self) -> impl Future<Output = anyhow::Result<Vec<GpuMode>>> + Send;

@@ -14,11 +14,13 @@ use crate::ui::widgets::{
     slider_widget_tinted, toggle_widget,
 };
 
-pub fn get_color_presets() -> [(&'static str, RgbColor); 11] {
-    let (_, theme_col) = crate::ui::theme::Theme::get_system_theme_color();
+pub const SENTINEL_SPECTRUM_CYCLE: RgbColor = RgbColor { r: 1, g: 1, b: 1 };
+pub const SENTINEL_DYNAMIC_THEME: RgbColor = RgbColor { r: 2, g: 2, b: 2 };
+
+pub fn get_software_color_presets() -> [(&'static str, RgbColor); 11] {
     [
-        ("Dynamic Theme", theme_col),
-        ("Spectrum Cycle", RgbColor::new(1, 1, 1)),
+        ("Dynamic Theme", SENTINEL_DYNAMIC_THEME),
+        ("Spectrum Cycle", SENTINEL_SPECTRUM_CYCLE),
         ("Gruvbox", RgbColor::new(235, 219, 178)),
         ("Catppuccin", RgbColor::new(245, 194, 231)),
         ("Cyberpunk", RgbColor::new(0, 255, 170)),
@@ -31,11 +33,36 @@ pub fn get_color_presets() -> [(&'static str, RgbColor); 11] {
     ]
 }
 
+pub fn get_static_color_presets() -> [(&'static str, RgbColor); 9] {
+    [
+        ("Gruvbox", RgbColor::new(235, 219, 178)),
+        ("Catppuccin", RgbColor::new(245, 194, 231)),
+        ("Cyberpunk", RgbColor::new(0, 255, 170)),
+        ("Nord", RgbColor::new(136, 192, 208)),
+        ("Sunset Amber", RgbColor::new(255, 122, 0)),
+        ("Red", RgbColor::new(255, 0, 0)),
+        ("Green", RgbColor::new(0, 255, 0)),
+        ("Blue", RgbColor::new(0, 136, 255)),
+        ("White", RgbColor::new(255, 255, 255)),
+    ]
+}
+
+pub fn get_color_presets() -> [(&'static str, RgbColor); 11] {
+    get_software_color_presets()
+}
+
+pub fn get_presets_for_app<B: Backend>(app: &AppState<B>) -> Vec<(&'static str, RgbColor)> {
+    if app.active_software_effect == SoftwareEffect::None {
+        get_static_color_presets().to_vec()
+    } else {
+        get_software_color_presets().to_vec()
+    }
+}
+
 pub fn get_active_preset_name(color: RgbColor) -> &'static str {
-    let (_, theme_col) = crate::ui::theme::Theme::get_system_theme_color();
-    if color == RgbColor::new(1, 1, 1) {
+    if color == SENTINEL_SPECTRUM_CYCLE {
         "Spectrum Cycle"
-    } else if color == theme_col {
+    } else if color == SENTINEL_DYNAMIC_THEME {
         "Dynamic Theme"
     } else if color == RgbColor::new(235, 219, 178) {
         "Gruvbox"
@@ -108,7 +135,7 @@ pub fn is_aura_field_supported<B: Backend>(app: &AppState<B>, field: usize) -> b
     let mode_idx = get_current_mode_index(app);
     let is_firmware_breathe = app.active_software_effect == SoftwareEffect::None && app.aura_mode == 1;
     let is_firmware_rainbow = app.active_software_effect == SoftwareEffect::None && app.aura_mode == 2;
-    let is_animated = mode_idx == 4 || mode_idx == 5 || mode_idx == 6 || mode_idx == 7 || mode_idx == 9 || is_firmware_breathe || is_firmware_rainbow;
+    let is_animated = mode_idx == 3 || mode_idx == 4 || mode_idx == 5 || mode_idx == 6 || mode_idx == 7 || mode_idx == 9 || is_firmware_breathe || is_firmware_rainbow;
     let is_voice_pulse = app.active_software_effect == SoftwareEffect::VoicePulse;
     let has_direction = mode_idx == 4 || is_firmware_rainbow;
     let is_custom_color = get_active_preset_name(app.aura_data.color1) == "Custom" || app.hex_input_buffer.is_some();
@@ -117,7 +144,7 @@ pub fn is_aura_field_supported<B: Backend>(app: &AppState<B>, field: usize) -> b
         0 | 1 | 9..=12 => true,
         2 => supports_custom_color(app),
         3..=5 => supports_custom_color(app) && is_custom_color,
-        6 => is_firmware_breathe,
+        6 => is_firmware_breathe && app.has_multizone_rgb,
         7 => is_animated || is_voice_pulse,
         8 => has_direction,
         13 | 14 => app.has_slash_led,
@@ -240,15 +267,24 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         if is_aura_field_supported(app, 2) {
             let col = app.aura_data.color1;
             let preset_name = get_active_preset_name(col);
-            let is_spectrum = col == RgbColor::new(1, 1, 1);
+            let is_spectrum = col == SENTINEL_SPECTRUM_CYCLE;
+            let is_dynamic_theme = col == SENTINEL_DYNAMIC_THEME;
             let swatch_color = if is_spectrum {
                 theme.accent
+            } else if is_dynamic_theme {
+                let (_, sys_col) = crate::ui::theme::Theme::get_system_theme_color();
+                Color::Rgb(sys_col.r, sys_col.g, sys_col.b)
             } else {
                 Color::Rgb(col.r, col.g, col.b)
             };
 
-            // Row: Preset
-            let preset_spans = choice_widget(preset_name, app.aura_selected_field == 2, theme);
+            // Row: Preset with hotkey hints for Color Picker ('c') and Hex input ('#')
+            let mut preset_spans = choice_widget(preset_name, app.aura_selected_field == 2, theme);
+            preset_spans.push(Span::raw("   "));
+            preset_spans.push(Span::styled("c", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
+            preset_spans.push(Span::styled(" picker  ", Style::default().fg(theme.dim)));
+            preset_spans.push(Span::styled("#", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
+            preset_spans.push(Span::styled(" hex", Style::default().fg(theme.dim)));
             lines.push(label_value_row("Preset", preset_spans, app.aura_selected_field == 2, label_width, theme));
 
             // Custom hex and R / G / B sliders only when Custom color is active
@@ -256,6 +292,11 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
                 // Row: Custom hex with 2-char block preview
                 let hex_str = if let Some(buf) = &app.hex_input_buffer {
                     format!("#{buf}_")
+                } else if is_dynamic_theme {
+                    let (_, sys_col) = crate::ui::theme::Theme::get_system_theme_color();
+                    format!("{} (Live)", sys_col.to_hex())
+                } else if is_spectrum {
+                    "Rainbow (Cycle)".to_string()
                 } else {
                     col.to_hex()
                 };

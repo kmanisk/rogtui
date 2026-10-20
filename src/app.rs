@@ -316,9 +316,33 @@ impl AudioCaptureService {
         self.audio_level.load(Ordering::Relaxed)
     }
 
+    pub fn set_audio_level(&self, val: u8) {
+        self.audio_level.store(val, Ordering::Relaxed);
+    }
+
     /// Automatically find the active audio output monitor on PipeWire/PulseAudio.
-    /// Priority: Active default sink monitor -> First RUNNING monitor -> Default monitor.
+    /// Priority: Active RUNNING monitor -> Default sink monitor -> Default monitor.
     pub fn find_preferred_monitor_source() -> String {
+        // 1. Check for any currently RUNNING .monitor source (catches active DSP or application virtual sinks)
+        if let Ok(output) = std::process::Command::new("pactl")
+            .args(["list", "short", "sources"])
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let name = parts[1];
+                        if name.ends_with(".monitor") && line.contains("RUNNING") {
+                            return name.to_string();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fall back to default sink .monitor
         if let Ok(output) = std::process::Command::new("pactl")
             .arg("get-default-sink")
             .output()
@@ -330,6 +354,8 @@ impl AudioCaptureService {
                 }
             }
         }
+
+        // 3. Fall back to any monitor source
         if let Ok(output) = std::process::Command::new("pactl")
             .args(["list", "short", "sources"])
             .output()
@@ -340,7 +366,7 @@ impl AudioCaptureService {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 2 {
                         let name = parts[1];
-                        if name.ends_with(".monitor") && (line.contains("RUNNING") || name.contains("analog-stereo")) {
+                        if name.ends_with(".monitor") {
                             return name.to_string();
                         }
                     }
@@ -611,6 +637,7 @@ pub struct AppState<B: Backend> {
     pub is_full_charge_active: bool,
     pub last_theme_mtime: Option<std::time::SystemTime>,
     pub last_ac_online: Option<bool>,
+    pub has_multizone_rgb: bool,
     pub has_slash_led: bool,
     pub slash_mode: String,
     pub slash_brightness: u32,
@@ -672,6 +699,7 @@ impl<B: Backend> AppState<B> {
 
         let gpu_selected_idx = gpu_supported.iter().position(|m| *m == gpu_mode).unwrap_or(0);
 
+        let has_multizone_rgb = backend.get_multizone_supported().await.unwrap_or(false);
         let has_slash_led = backend.get_slash_supported().await.unwrap_or(false);
         let slash_mode = if has_slash_led {
             backend.get_slash_mode().await.unwrap_or_else(|_| "Static".to_string())
@@ -772,6 +800,7 @@ impl<B: Backend> AppState<B> {
             is_full_charge_active: false,
             last_theme_mtime: None,
             last_ac_online,
+            has_multizone_rgb,
             has_slash_led,
             slash_mode,
             slash_brightness,
@@ -1184,8 +1213,16 @@ impl<B: Backend> AppState<B> {
     pub fn compute_strobe_color(&mut self) -> RgbColor {
         self.strobe_state = !self.strobe_state;
         if self.strobe_state {
-            if self.aura_data.color1.r == 0 && self.aura_data.color1.g == 0 && self.aura_data.color1.b == 0 {
-                RgbColor::new(0, 255, 255)
+            if self.aura_data.color1 == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE {
+                self.spectrum_pulse_hue = (self.spectrum_pulse_hue + 25.0) % 360.0;
+                RgbColor::from_hsv(self.spectrum_pulse_hue, 100.0, 100.0)
+            } else if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
+                || !self.user_custom_color
+                || (self.aura_data.color1.r == 0
+                    && self.aura_data.color1.g == 0
+                    && self.aura_data.color1.b == 0)
+            {
+                crate::ui::theme::Theme::read_system_theme().1
             } else {
                 self.aura_data.color1
             }
@@ -1240,11 +1277,12 @@ impl<B: Backend> AppState<B> {
         let level = self.audio_service.get_mic_level();
         self.mic_level = level;
 
-        let c = if self.aura_data.color1 == RgbColor::new(1, 1, 1) {
+        let c = if self.aura_data.color1 == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE {
             let hue_step = 1.0 + (level as f32) * 0.40;
             self.spectrum_pulse_hue = (self.spectrum_pulse_hue + hue_step) % 360.0;
             RgbColor::from_hsv(self.spectrum_pulse_hue, 100.0, 100.0)
-        } else if !self.user_custom_color
+        } else if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
+            || !self.user_custom_color
             || (self.aura_data.color1.r == 0
                 && self.aura_data.color1.g == 0
                 && self.aura_data.color1.b == 0)
@@ -1284,11 +1322,12 @@ impl<B: Backend> AppState<B> {
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
 
-        let c = if self.aura_data.color1 == RgbColor::new(1, 1, 1) {
+        let c = if self.aura_data.color1 == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE {
             let hue_step = 1.2 + (level as f32) * 0.45;
             self.spectrum_pulse_hue = (self.spectrum_pulse_hue + hue_step) % 360.0;
             RgbColor::from_hsv(self.spectrum_pulse_hue, 100.0, 100.0)
-        } else if !self.user_custom_color
+        } else if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
+            || !self.user_custom_color
             || (self.aura_data.color1.r == 0
                 && self.aura_data.color1.g == 0
                 && self.aura_data.color1.b == 0)
@@ -1375,20 +1414,23 @@ impl<B: Backend> AppState<B> {
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
 
-        let raw_level = level as f32;
-        let alpha = if raw_level > self.audio_level_smooth { 0.45 } else { 0.15 };
-        self.audio_level_smooth = self.audio_level_smooth * (1.0 - alpha) + raw_level * alpha;
+        let (min_mult, max_mult) = match self.aura_brightness {
+            1 => (0.00, 0.45),
+            2 => (0.05, 0.75),
+            _ => (0.00, 1.00),
+        };
 
-        if self.aura_brightness == 1 && level == 0 {
-            RgbColor::new(0, 0, 0)
+        let ratio = (level as f32 / 100.0).clamp(0.0, 1.0);
+        let mult = if level == 0 {
+            min_mult
         } else {
-            let energy = (self.audio_level_smooth / 100.0).clamp(0.0, 1.0);
-            let brightness_factor = 0.18 + 0.82 * energy.powf(1.1);
-            let (h, s, v) = base_col.to_hsv();
-            let dyn_s = (s + energy * 25.0).clamp(0.0, 100.0);
-            let dyn_v = (v * brightness_factor).clamp(0.0, 100.0);
-            RgbColor::from_hsv(h, dyn_s, dyn_v)
-        }
+            min_mult + (max_mult - min_mult) * ratio
+        };
+
+        let (h, s, _) = base_col.to_hsv();
+        let dyn_s = (s + ratio * 20.0).clamp(10.0, 100.0);
+        let dyn_v = (mult * 100.0).clamp(0.0, 100.0);
+        RgbColor::from_hsv(h, dyn_s, dyn_v)
     }
 
     /// Apply the active software effect to the keyboard via volatile EC write.
