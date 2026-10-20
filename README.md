@@ -110,15 +110,89 @@ install -Dm755 target/release/rogtui ~/.local/bin/rogtui
 | `j` / `k` or `Up` / `Down` | Lists | Navigate controls and menu items |
 | `h` / `l` or `Left` / `Right` | Sliders / Menus | Adjust values, change presets, or cycle options |
 | `Enter` / `Space` | Controls | Activate button, confirm modal, or open color picker |
+| `m` / `M` | RGB | Cycle forward / backward through all 19 Aura effects |
+| `p` / `P` | RGB | Cycle forward / backward through curated color presets |
+| `b` / `B` | RGB | Adjust keyboard backlight brightness (Off, Low, Med, High) |
 | `c` | RGB / Fan | Open color picker modal (RGB) / toggle custom fan curve (Fan) |
 | `#` | RGB | Enter 6-digit hex color directly (e.g. `ff4080`) |
-| `p` | Global | Quick cycle active Platform Profile |
+| `p` | Global | Quick cycle active Platform Profile (Dashboard) |
 | `w` | Fan | Write staged fan curve to hardware EC |
 | `r` | Fan | Reset selected fan curve to factory BIOS defaults |
 | `f` | Fan | Toggle CPU / GPU fan curve selection |
 | `y` | System | Export full markdown diagnostic report |
 | `?` | Global | Open keyboard shortcuts help modal |
 | `q` / `Esc` | Global | Dismiss modal / exit application |
+
+---
+
+## Headless CLI Control & Window Manager Keybindings
+
+You do not need to open the TUI to control keyboard lighting, presets, or effects. `rogtui` provides high-speed standalone CLI subcommands that execute directly over D-Bus in under 15ms.
+
+### CLI Subcommands
+
+| Command | Action |
+| :--- | :--- |
+| `rogtui aura next-mode` (or `rogtui next-effect`) | Cycle to the next Aura effect (hardware and software) |
+| `rogtui aura prev-mode` (or `rogtui prev-effect`) | Cycle to the previous Aura effect |
+| `rogtui aura next-preset` (or `rogtui next-preset`) | Cycle forward through curated color presets |
+| `rogtui aura prev-preset` (or `rogtui prev-preset`) | Cycle backward through curated color presets |
+| `rogtui aura toggle` (or `rogtui toggle-rgb`) | Toggle keyboard backlighting on or off |
+| `rogtui aura brightness [up\|down\|off\|low\|med\|high\|0-3]` | Set brightness level directly |
+| `rogtui aura status` | Print current Aura mode, color preset, and brightness |
+| `rogtui --close` | Stop the background daemon and turn off RGB lighting |
+
+### Background Daemon & Live State Synchronization
+
+- **Autonomous Daemon Management:** If an active software effect (such as Audio Pulse, Audio Wave, Ambient Audio Sync, Rainbow Wave, or Thermal Heatmap) is selected, `rogtui` automatically manages the background daemon (`rogtui --daemon`, <0.2% CPU). When cycling back to a hardware effect (Static, Breathe, Rainbow), the daemon automatically yields and terminates.
+- **Bidirectional Live Synchronization:** If `rogtui` is currently running on your screen, triggering external keybindings or CLI subcommands immediately hot-reloads the active TUI in real-time within 50ms without restarting the app or dropping state.
+
+### Window Manager Keybinding Recipes
+
+#### Sway & i3 (`~/.config/sway/config` or `~/.config/i3/config`)
+
+```swayconfig
+# Hardware laptop keys
+bindsym XF86Launch4 exec --no-startup-id rogtui aura next-mode
+bindsym Shift+XF86Launch4 exec --no-startup-id rogtui aura next-preset
+bindsym XF86KbdBrightnessUp exec --no-startup-id rogtui aura brightness up
+bindsym XF86KbdBrightnessDown exec --no-startup-id rogtui aura brightness down
+
+# Universal chords (Super + Alt)
+bindsym $mod+Mod1+m exec --no-startup-id rogtui aura next-mode
+bindsym $mod+Mod1+Shift+m exec --no-startup-id rogtui aura prev-mode
+bindsym $mod+Mod1+p exec --no-startup-id rogtui aura next-preset
+bindsym $mod+Mod1+Shift+p exec --no-startup-id rogtui aura prev-preset
+bindsym $mod+Mod1+b exec --no-startup-id rogtui aura toggle
+```
+
+#### Hyprland (`~/.config/hypr/hyprland.conf`)
+
+```ini
+# Hardware laptop keys
+bind = , XF86Launch4, exec, rogtui aura next-mode
+bind = SHIFT, XF86Launch4, exec, rogtui aura next-preset
+bind = , XF86KbdBrightnessUp, exec, rogtui aura brightness up
+bind = , XF86KbdBrightnessDown, exec, rogtui aura brightness down
+
+# Universal chords (Super + Alt)
+bind = SUPER ALT, M, exec, rogtui aura next-mode
+bind = SUPER ALT SHIFT, M, exec, rogtui aura prev-mode
+bind = SUPER ALT, P, exec, rogtui aura next-preset
+bind = SUPER ALT SHIFT, P, exec, rogtui aura prev-preset
+bind = SUPER ALT, B, exec, rogtui aura toggle
+```
+
+#### xremap (`~/.config/xremap/config.yml`)
+
+```yaml
+keymap:
+  - name: Rogtui Aura Controls
+    remap:
+      Super-Alt-m: { launch: ["rogtui", "aura", "next-mode"] }
+      Super-Alt-p: { launch: ["rogtui", "aura", "next-preset"] }
+      Super-Alt-b: { launch: ["rogtui", "aura", "toggle"] }
+```
 
 ---
 
