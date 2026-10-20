@@ -12,9 +12,7 @@ documentation = "https://docs.rs/rogtui"
 keywords = ["asus", "rog", "tuf", "tui", "hardware"]
 categories = ["command-line-utilities", "hardware-support"]
 exclude = [
-    "assets/demo.mp4",
-    "assets/demo.gif",
-    "assets/rogtui-recording.mp4",
+    "assets/*",
 ]
 
 [dependencies]
