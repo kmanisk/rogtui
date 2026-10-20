@@ -68,6 +68,29 @@ async fn main() -> anyhow::Result<()> {
             println!("Saved capture: {file_path}");
             app.show_color_picker_modal = false;
         }
+
+        // Rainbow Wave (algorithmic mode with hidden colors)
+        {
+            app.current_tab = ActiveTab::Aura;
+            app.active_software_effect = rogtui::backend::types::SoftwareEffect::RainbowWave;
+            let test_backend = TestBackend::new(w, h);
+            let mut terminal = Terminal::new(test_backend)?;
+            terminal.draw(|f| render_ui(f, &app))?;
+            let buffer = terminal.backend().buffer();
+            let mut content = String::new();
+            for y in 0..h {
+                let mut line = String::new();
+                for x in 0..w {
+                    line.push_str(buffer[(x, y)].symbol());
+                }
+                content.push_str(line.trim_end());
+                content.push('\n');
+            }
+            let file_path = format!("target/captures/rgb_rainbow_wave_{w}x{h}.txt");
+            std::fs::write(&file_path, content)?;
+            println!("Saved capture: {file_path}");
+            app.active_software_effect = rogtui::backend::types::SoftwareEffect::None;
+        }
     }
 
     Ok(())

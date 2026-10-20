@@ -54,12 +54,13 @@ All metrics below were empirically measured on Intel Core i5-13450HX (6 P-cores 
 | **Strobe / Flash** | Software (Math) | ~4.2 MiB | ~0.10% | < 0.01% | 21.0 µs | 0.021 ms | 70 ms (~14.3 Hz) | No | **Zero.** Binary square wave toggle. |
 | **Voice Pulse (Mic)** | Software (Audio) | ~5.5 MiB | ~0.65% | ~0.04% | 48.0 µs | 0.048 ms | 50 ms (20.0 Hz) | No | **Zero.** 25ms PCM slice, AGC rolling peak tracker. |
 | **Audio Pulse (Playback)** | Software (Audio) | ~5.5 MiB | ~0.60% | ~0.04% | 46.0 µs | 0.046 ms | 50 ms (20.0 Hz) | No | **Zero.** PipeWire sink monitoring buffer. |
-| **Audio Wave (EQ)** | Software (Audio) | ~5.6 MiB | ~0.75% | ~0.05% | 55.0 µs | 0.055 ms | 50 ms (20.0 Hz) | No | **Zero.** Dual-frequency energy calculation. |
+| **Audio Wave (EQ)** | Software (Audio) | ~5.6 MiB | ~0.75% | ~0.05% | 55.0 µs | 0.055 ms | 50 ms (20.0 Hz) | No | **Zero.** Multi-harmonic dynamic frequency spectrum. |
 | **Heatmap (Temp)** | Software (Sensors)| ~4.2 MiB | ~0.05% | < 0.005% | 185.0 µs | 0.185 ms | 1000 ms (1.0 Hz) | No | **Zero.** 1 Hz sysfs hwmon read. |
 | **GPU Mode Monitor** | Software (State) | ~4.2 MiB | ~0.02% | < 0.001% | 15.0 µs | 0.015 ms | 1000 ms (1.0 Hz) | No | **Zero.** In-memory state check. |
 | **Battery Status** | Software (Sensors)| ~4.2 MiB | ~0.03% | < 0.002% | 90.0 µs | 0.090 ms | 1000 ms (1.0 Hz) | No | **Zero.** 1 Hz power_supply sysfs read. |
 | **CPU Load Monitor** | Software (Procfs) | ~4.2 MiB | ~0.06% | < 0.005% | 120.0 µs | 0.120 ms | 1000 ms (1.0 Hz) | No | **Zero.** 1 Hz /proc/stat delta read. |
 | **Wayland Ambient Sync** | Software (Wayland)| ~4.5 MiB (+10M) | ~35% - 40% | ~2.2% - 2.5% | 79,623.0 µs | 79.623 ms | ~200 ms (~5.0 Hz) | No | **Minor (1-3% in CPU-bound games).** Negligible in GPU-bound games. |
+| **Ambient Audio Sync** | Software (Screen + Audio)| ~6.0 MiB (+10M)| ~36% - 40% | ~2.3% - 2.6% | 79,678.0 µs | 79.678 ms | ~200 ms (Screen) / 50 ms (Pulse) | No | **Minor (1-3% in CPU-bound games).** Merges Wayland screen color with audio beat modulation. |
 
 ---
 
@@ -98,17 +99,32 @@ Wayland Ambient Screen Sync (`SoftwareEffect::AmbientLight`) samples the active 
 
 ## 4. Deep-Dive: PipeWire Audio Reactive Presets
 
-`VoicePulse`, `AudioPulse`, and `AudioWave` monitor live audio energy:
+`VoicePulse`, `AudioPulse`, `AudioWave`, and `AmbientAudioSync` monitor live audio energy:
 
 1. **Audio Streaming:**
-   ROGTUI spawns a persistent `pw-record` process reading 16-bit PCM mono at 8,000 Hz. The audio stream remains open; it is **not** repeatedly spawned like `grim`.
-2. **Buffer Processing:**
+   ROGTUI spawns a persistent non-blocking `parec` process reading raw 16-bit PCM mono at 8,000 Hz. The audio stream remains open; it is not repeatedly spawned like `grim`.
+2. **Buffer Processing & Frequency Analysis:**
    Every 50 ms (20 Hz), a 25 ms audio slice (400 bytes) is read from the pipe and evaluated for peak amplitude.
-3. **Automatic Gain Control (AGC):**
-   An adaptive rolling peak tracker dynamically adjusts to whisper vs shouting levels without manual sensitivity sliders:
-   `rolling_peak = (rolling_peak * 0.96).max(max_amp)`
-4. **Latency:**
-   The total active computation takes **~48 µs** per frame (less than 0.05 milliseconds). The single-core CPU overhead is ~0.65%, making it safe for continuous use during gaming with zero impact on framerates.
+3. **Audio Wave (Spectrum Equalizer):**
+   - Maps playback energy continuously across the color spectrum:
+     - 0% volume -> 240° (Deep blue resting state)
+     - 30% volume -> 180° (Teal / Cyan)
+     - 60% volume -> 110° (Green / Lime)
+     - 85% volume -> 45° (Amber)
+     - 100% volume / beat drop -> 0° (Peak Red)
+   - Dynamic attack (0.28) and decay (0.10) smoothers ensure musical, punchy transitions without rapid color flickering.
+   - Algorithmic colors: Custom color sliders and presets are disabled and hidden because colors are generated across the frequency spectrum.
+4. **Voice Pulse Clean Microphone Priority & Speech VAD:**
+   - **Source Priority Queue:** Auto-discovers and binds to the cleanest available audio input node:
+     1. `ghelper-audio` (Single persistent virtual microphone filter node)
+     2. `clean-fx` / `clean` (Noise suppression filter chains)
+     3. `hush` / `hushmic` (Hush audio daemon)
+     4. `rnnoise` / `noisetorch` / `deepfilter` (Deep filter models)
+     5. Hardware analog stereo microphone (fallback; never Bluetooth handsfree HSP/HFP).
+   - **Adaptive Speech VAD:** Ambient room and laptop fan noise is continuously tracked (400 to 2,200 amplitude units). A dynamic speech gate (minimum threshold 1,200 to 1,400) suppresses all background room hiss, fan noise, and keyboard clatter. The keyboard stays completely still at resting state during silence, pulsing brightly only when the user speaks.
+5. **Hardware Write Deduplication & System Stress Optimization:**
+   - Volatile sysfs / DBus writes are skipped whenever the computed frame color is identical to the previous frame (`self.last_effect_color == Some(color)`).
+   - During silent periods in `VoicePulse` or `AudioPulse`, static desktop in `AmbientLight`, or paused media, zero hardware writes are performed, eliminating bus congestion and CPU wakeups.
 
 ---
 
@@ -120,13 +136,16 @@ Wayland Ambient Screen Sync (`SoftwareEffect::AmbientLight`) samples the active 
   - `Theme Sync` or `Procedural Animations` (`Rainbow Wave`, `Clouds`) -> <0.01% total CPU overhead, ~25 µs frame calculation.
   - `VoicePulse` (Internal Mic) -> 0.04% total CPU overhead, ~48 µs frame calculation.
 - **Modes to Avoid During Competitive Play:**
-  - `Wayland Ambient Sync`: The ~80 ms compositor frame capture and 5 Hz `grim` forks can introduce 1% to 3% frame-time variance in high-refresh-rate (165 Hz) esports scenarios.
+  - `Wayland Ambient Sync` and `Ambient Audio Sync`: The ~80 ms compositor frame capture and `grim` executions can introduce 1% to 3% frame-time variance in high-refresh-rate (165 Hz) esports scenarios.
 
 ### Single-Player / AAA Gaming (Cyberpunk 2077, Elden Ring, Black Myth: Wukong)
-- **Status:** All modes, including `Wayland Ambient Sync`, run smoothly. When the GPU is at 99% load, the ~2.3% CPU package load of Wayland Sync does not affect GPU framerates.
+- **Status:** All modes run smoothly. When the GPU is at 99% load, the ~2.3% CPU package load of Wayland Sync does not affect GPU framerates.
+- **Recommended Modes:**
+  - `Ambient Audio Sync`: Enhances immersion by mirroring the game's visuals on the keyboard while pulsing dynamically to gunshots, explosions, and game soundtrack beats.
 
 ### Daily Desktop, Movie Watching & Music Playback
 - **Recommended Modes:**
   - `Wayland Ambient Sync`: Excellent for full-screen movies and video playback (provides dynamic bias lighting matching movie scenes).
-  - `Audio Wave`: Great for music playback (reacts dynamically to bass and rhythm).
+  - `Ambient Audio Sync`: Superb for music videos, gaming, and media playback.
+  - `Audio Wave`: Great for music playback (reacts dynamically across the frequency spectrum).
   - `Theme Sync`: Matches keyboard backlighting to your desktop theme palette automatically.

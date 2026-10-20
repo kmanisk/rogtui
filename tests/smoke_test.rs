@@ -531,20 +531,60 @@ async fn test_unified_aura_mode_and_preset_cycling() {
     assert_eq!(app.active_software_effect, SoftwareEffect::VoicePulse);
     assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 10);
 
-    // Cycle right 8 more times -> should complete 18-step full circle back to 0 (Static)
-    for _ in 0..8 {
+    // Cycle right 9 more times -> should complete 19-step full circle back to 0 (Static)
+    for _ in 0..9 {
         rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
     }
     assert_eq!(app.active_software_effect, SoftwareEffect::None);
     assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 0);
 
-    // 2. Test Field 2: Color Preset cycling
+    // 2. Test Field 2: Color Preset cycling (on Static mode where colors are supported)
     app.aura_selected_field = 2;
     let initial_color = app.aura_data.color1;
     rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('l'))).await;
-    assert_ne!(app.aura_data.color1, initial_color, "Preset cycling must change color1");
+    assert_ne!(app.aura_data.color1, initial_color, "Preset cycling must change color1 on Static mode");
     let preset_name = rogtui::ui::aura::get_active_preset_name(app.aura_data.color1);
     assert_ne!(preset_name, "Custom", "Preset color should match a known preset name");
+
+    // Verify algorithmic modes (Rainbow Wave, Fire Flicker, Clouds, Theme Sync, Audio Wave, Ambient Audio Sync)
+    // completely disable and hide custom colors (fields 2..=5)
+    app.active_software_effect = SoftwareEffect::RainbowWave;
+    assert!(!rogtui::ui::aura::supports_custom_color(&app));
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 2));
+
+    app.active_software_effect = SoftwareEffect::FireFlicker;
+    assert!(!rogtui::ui::aura::supports_custom_color(&app));
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 2));
+
+    app.active_software_effect = SoftwareEffect::Clouds;
+    assert!(!rogtui::ui::aura::supports_custom_color(&app));
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 2));
+
+    app.active_software_effect = SoftwareEffect::ThemeSync;
+    assert!(!rogtui::ui::aura::supports_custom_color(&app));
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 2));
+
+    app.active_software_effect = SoftwareEffect::AudioWave;
+    assert!(!rogtui::ui::aura::supports_custom_color(&app));
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 2));
+
+    app.active_software_effect = SoftwareEffect::AmbientLight;
+    assert!(!rogtui::ui::aura::supports_custom_color(&app));
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 2));
+
+    app.active_software_effect = SoftwareEffect::AmbientAudioSync;
+    assert!(!rogtui::ui::aura::supports_custom_color(&app));
+    assert!(!rogtui::ui::aura::is_aura_field_supported(&app, 2));
+
+    // Verify color picker shortcut 'c' is blocked on algorithmic modes
+    rogtui::handler::handle_key_event(&mut app, KeyEvent::from(KeyCode::Char('c'))).await;
+    assert!(!app.show_color_picker_modal, "Color picker modal must remain closed on algorithmic mode");
+
+    // Switch back to Static mode
+    app.active_software_effect = SoftwareEffect::None;
+    app.aura_mode = 0;
+    assert!(rogtui::ui::aura::supports_custom_color(&app));
+    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 2));
 
     // 3. Test Power States vertical navigation and toggle (Fields 9..=12)
     app.aura_selected_field = 9; // Boot
@@ -677,6 +717,34 @@ fn test_charge_limit_slider_thumb_and_level_display() {
 
     assert!(rendered.contains('◆'), "Slider must render thumb marker");
     assert!(rendered.contains("60% (max lifespan)"), "Slider must show lifespan description");
+}
+
+#[tokio::test]
+async fn test_dashboard_footer_p_key_persistence() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = ActiveTab::Dashboard;
+
+    // Press 'p' to switch profile -> status message is set
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('p'))).await;
+    assert!(app.status_message.is_some(), "Status message should be active after profile change");
+
+    // Render footer and verify 'p' and 'profile' are present in the output
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let test_backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(test_backend).unwrap();
+    terminal.draw(|f| rogtui::ui::render_ui(f, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+
+    let mut footer_text = String::new();
+    for x in 0..80 {
+        footer_text.push_str(buffer[(x, 23)].symbol());
+    }
+
+    assert!(footer_text.contains('p'), "Footer must contain 'p' key shortcut");
+    assert!(footer_text.contains("profile"), "Footer must contain 'profile' label");
+    assert!(footer_text.contains("[ok]"), "Footer must contain [ok] status indicator");
 }
 
 

@@ -108,7 +108,10 @@ impl AudioCaptureService {
 
         self.running.store(true, Ordering::Relaxed);
         let running_clone = self.running.clone();
-        let is_mic = source.contains("SOURCE");
+        let is_mic = source.contains("SOURCE")
+            || source.contains("input")
+            || source.contains("mic")
+            || source.contains("ghelper");
         let output_atomic = if is_mic {
             self.mic_level.clone()
         } else {
@@ -145,7 +148,8 @@ impl AudioCaptureService {
 
             use std::io::Read;
             let mut buf = [0u8; 400]; // 200 samples (25ms)
-            let mut rolling_peak: f32 = 800.0;
+            let mut rolling_peak: f32 = if is_mic { 4000.0 } else { 800.0 };
+            let mut noise_baseline: f32 = if is_mic { 900.0 } else { 150.0 };
             let mut decay_brightness: f32 = 0.0;
 
             while running_clone.load(Ordering::Relaxed) {
@@ -172,21 +176,36 @@ impl AudioCaptureService {
                     }
                 }
 
-                // Automatic Gain Control (AGC) - community formula adapted from G-Helper
-                rolling_peak = (rolling_peak * 0.96).max(max_amp as f32).max(if is_mic { 300.0 } else { 800.0 });
-                let noise_floor = if is_mic { 80.0 } else { 150.0 };
                 let current_f = max_amp as f32;
-
-                let raw_ratio = if current_f <= noise_floor {
-                    0.0
+                let raw_ratio = if is_mic {
+                    // Adaptively track ambient noise floor in quiet room so fan/room hiss never triggers pulses
+                    if current_f < noise_baseline * 1.5 {
+                        noise_baseline = noise_baseline * 0.96 + current_f * 0.04;
+                        noise_baseline = noise_baseline.clamp(400.0, 2200.0);
+                    }
+                    let speech_gate = (noise_baseline * 1.7).max(1200.0);
+                    if current_f <= speech_gate {
+                        0.0
+                    } else {
+                        rolling_peak = (rolling_peak * 0.95).max(current_f).max(4500.0);
+                        ((current_f - speech_gate) / (rolling_peak - speech_gate)).clamp(0.0, 1.0)
+                    }
                 } else {
-                    ((current_f - noise_floor) / (rolling_peak - noise_floor)).clamp(0.0, 1.0)
+                    rolling_peak = (rolling_peak * 0.96).max(current_f).max(800.0);
+                    let noise_floor = 150.0;
+                    if current_f <= noise_floor {
+                        0.0
+                    } else {
+                        ((current_f - noise_floor) / (rolling_peak - noise_floor)).clamp(0.0, 1.0)
+                    }
                 };
 
-                // Exponential decay (G-Helper: envBrightness = Math.Max(envBrightness * audioDecay, max))
-                decay_brightness = (decay_brightness * 0.72).max(raw_ratio);
+                let decay_rate = if is_mic { 0.65 } else { 0.72 };
+                decay_brightness = (decay_brightness * decay_rate).max(raw_ratio);
+                if decay_brightness < 0.03 {
+                    decay_brightness = 0.0;
+                }
 
-                // G-Helper cubic easing curve
                 let curved = decay_brightness * decay_brightness * decay_brightness;
                 let level = (curved * 100.0).round().clamp(0.0, 100.0) as u8;
 
@@ -199,6 +218,58 @@ impl AudioCaptureService {
 
         self.thread_handle = Some(handle);
         self.current_source = Some(source.to_string());
+    }
+
+    /// Automatically find the cleanest microphone available on the system.
+    /// Priority: ghelper-audio -> clean/clean-fx -> hush/hushmic -> rnnoise/filter -> default analog mic.
+    pub fn find_preferred_mic_source() -> String {
+        if let Ok(output) = std::process::Command::new("pactl")
+            .args(["list", "short", "sources"])
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                let mut candidates: Vec<String> = Vec::new();
+                for line in text.lines() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let name = parts[1];
+                        if !name.ends_with(".monitor") && !name.contains("bluez_input") {
+                            candidates.push(name.to_string());
+                        }
+                    }
+                }
+                // Priority 1: ghelper-audio (single persistent virtual mic)
+                if let Some(src) = candidates.iter().find(|s| s.contains("ghelper-audio")) {
+                    return src.clone();
+                }
+                // Priority 2: clean-fx / clean
+                if let Some(src) = candidates.iter().find(|s| s.contains("clean")) {
+                    return src.clone();
+                }
+                // Priority 3: hush / hushmic
+                if let Some(src) = candidates.iter().find(|s| s.contains("hush")) {
+                    return src.clone();
+                }
+                // Priority 4: rnnoise / noisetorch / deepfilter
+                if let Some(src) = candidates.iter().find(|s| {
+                    s.contains("rnnoise")
+                        || s.contains("noisetorch")
+                        || s.contains("deepfilter")
+                        || s.contains("filter")
+                }) {
+                    return src.clone();
+                }
+                // Priority 5: analog mic input
+                if let Some(src) = candidates
+                    .iter()
+                    .find(|s| s.contains("analog-stereo") || s.contains("input"))
+                {
+                    return src.clone();
+                }
+            }
+        }
+        "@DEFAULT_SOURCE@".to_string()
     }
 
     pub fn stop(&mut self) {
@@ -291,7 +362,7 @@ impl AmbientCaptureService {
                     }
                 }
 
-                std::thread::sleep(std::time::Duration::from_millis(120));
+                std::thread::sleep(std::time::Duration::from_millis(160));
             }
         });
 
@@ -1101,7 +1172,8 @@ impl<B: Backend> AppState<B> {
     /// Priority: Defaults to active system desktop theme color; overridden by user-specified custom color.
     /// At brightness 1 (Low), pulses between 0 (off) and 1 (lit) on speech sound.
     pub fn compute_voice_pulse_color(&mut self) -> RgbColor {
-        self.audio_service.start("@DEFAULT_SOURCE@");
+        let mic_source = AudioCaptureService::find_preferred_mic_source();
+        self.audio_service.start(&mic_source);
         let level = self.audio_service.get_mic_level();
         self.mic_level = level;
 
@@ -1231,10 +1303,38 @@ impl<B: Backend> AppState<B> {
         }
     }
 
+    /// Ambient Audio Sync: Merges real-time Wayland display color extraction
+    /// with speaker/headphone playback audio reactive dynamics.
+    /// Screen captures provide the scene color hue and saturation,
+    /// while audio playback levels modulate the brightness and energy rhythm.
+    pub fn compute_ambient_audio_sync_color(&mut self) -> RgbColor {
+        self.ambient_service.start();
+        self.audio_service.start("@DEFAULT_MONITOR@");
+
+        let base_col = self.compute_ambient_color();
+        let level = self.audio_service.get_audio_level();
+        self.audio_level = level;
+
+        let raw_level = level as f32;
+        let alpha = if raw_level > self.audio_level_smooth { 0.35 } else { 0.12 };
+        self.audio_level_smooth = self.audio_level_smooth * (1.0 - alpha) + raw_level * alpha;
+
+        if self.aura_brightness == 1 && level == 0 {
+            RgbColor::new(0, 0, 0)
+        } else {
+            let mult = 0.20 + 0.80 * (self.audio_level_smooth / 100.0);
+            RgbColor::new(
+                (base_col.r as f32 * mult).min(255.0) as u8,
+                (base_col.g as f32 * mult).min(255.0) as u8,
+                (base_col.b as f32 * mult).min(255.0) as u8,
+            )
+        }
+    }
+
     /// Apply the active software effect to the keyboard via volatile EC write.
     /// No-op if brightness is Off (0) or effect is None.
-    /// Only writes to hardware when the computed color changes (for telemetry effects)
-    /// or on every tick for animated/audio effects.
+    /// Only writes to hardware when the computed color changes
+    /// to avoid stressing the system or bus with redundant I/O.
     pub async fn apply_software_effect(&mut self) {
         if self.aura_brightness == 0 || self.active_software_effect == SoftwareEffect::None {
             self.audio_service.stop();
@@ -1243,14 +1343,22 @@ impl<B: Backend> AppState<B> {
         }
 
         // Clean up services if no longer in audio or ambient modes
-        if !matches!(self.active_software_effect, SoftwareEffect::VoicePulse | SoftwareEffect::AudioPulse | SoftwareEffect::AudioWave) {
+        if !matches!(
+            self.active_software_effect,
+            SoftwareEffect::VoicePulse
+                | SoftwareEffect::AudioPulse
+                | SoftwareEffect::AudioWave
+                | SoftwareEffect::AmbientAudioSync
+        ) {
             self.audio_service.stop();
         }
-        if self.active_software_effect != SoftwareEffect::AmbientLight {
+        if !matches!(
+            self.active_software_effect,
+            SoftwareEffect::AmbientLight | SoftwareEffect::AmbientAudioSync
+        ) {
             self.ambient_service.stop();
         }
 
-        let is_animated = self.active_software_effect.is_animated();
         let color = match self.active_software_effect {
             SoftwareEffect::RainbowWave => self.compute_rainbow_wave_color(),
             SoftwareEffect::ColorCycle => self.compute_color_cycle_color(),
@@ -1262,6 +1370,7 @@ impl<B: Backend> AppState<B> {
             SoftwareEffect::AudioPulse => self.compute_audio_pulse_color(),
             SoftwareEffect::AudioWave => self.compute_audio_wave_color(),
             SoftwareEffect::AmbientLight => self.compute_ambient_color(),
+            SoftwareEffect::AmbientAudioSync => self.compute_ambient_audio_sync_color(),
             SoftwareEffect::Heatmap => {
                 Self::compute_heatmap_color(self.sensors.cpu_temp_c, self.sensors.gpu_temp_c)
             }
@@ -1280,8 +1389,8 @@ impl<B: Backend> AppState<B> {
             SoftwareEffect::None => return,
         };
 
-        // Deduplicate telemetry effects: skip write if color has not changed
-        if !is_animated && self.last_effect_color == Some(color) {
+        // Deduplicate effects: skip hardware write if color has not changed
+        if self.last_effect_color == Some(color) {
             return;
         }
         self.last_effect_color = Some(color);

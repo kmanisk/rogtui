@@ -877,14 +877,14 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             adjust_aura_field(app, 1).await;
         }
         KeyCode::Char('c') => {
-            if app.aura_brightness == 0 {
+            if app.aura_brightness == 0 || !crate::ui::aura::supports_custom_color(app) {
                 return;
             }
             let slot = if app.aura_selected_field == 6 { 2 } else { 1 };
             app.open_color_picker(slot);
         }
         KeyCode::Char('#') => {
-            if app.aura_brightness == 0 {
+            if app.aura_brightness == 0 || !crate::ui::aura::supports_custom_color(app) {
                 return;
             }
             app.hex_input_buffer = Some(String::new());
@@ -927,6 +927,9 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
     if app.aura_brightness == 0 && (1..=8).contains(&app.aura_selected_field) {
         return;
     }
+    if (2..=5).contains(&app.aura_selected_field) && !crate::ui::aura::supports_custom_color(app) {
+        return;
+    }
     match app.aura_selected_field {
         0 => {
             let b = (app.aura_brightness as i32 + dir).clamp(0, 3) as u32;
@@ -954,7 +957,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         }
         1 => {
             let current_idx = crate::ui::aura::get_current_mode_index(app) as i32;
-            let next_idx = ((current_idx + dir + 18) % 18) as usize;
+            let next_idx = ((current_idx + dir + 19) % 19) as usize;
             match next_idx {
                 0 => {
                     app.active_software_effect = SoftwareEffect::None;
@@ -1003,11 +1006,12 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 10 => activate_software_mode(app, SoftwareEffect::VoicePulse, "Voice Pulse active (speech reactive via clean mic)").await,
                 11 => activate_software_mode(app, SoftwareEffect::AudioPulse, "Audio Pulse active (speaker output reactive)").await,
                 12 => activate_software_mode(app, SoftwareEffect::AudioWave, "Audio Wave active (frequency spectrum EQ)").await,
-                13 => activate_software_mode(app, SoftwareEffect::AmbientLight, "Ambient Light active (Wayland screen sync)").await,
-                14 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
-                15 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
-                16 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
-                17 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
+                13 => activate_software_mode(app, SoftwareEffect::AmbientLight, "Ambient Screen Sync active (Wayland screen sync)").await,
+                14 => activate_software_mode(app, SoftwareEffect::AmbientAudioSync, "Ambient Audio Sync active (Screen color + Audio dynamics)").await,
+                15 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
+                16 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
+                17 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
+                18 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
                 _ => {}
             }
         }

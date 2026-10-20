@@ -438,7 +438,14 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
     let mut left_len = 2;
 
     if let Some((msg, is_error, _)) = &app.status_message {
-        let max_msg_len = width.saturating_sub(right_len + 8);
+        let prefix_len = if app.current_tab == ActiveTab::Dashboard {
+            left_spans.push(Span::styled("p", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
+            left_spans.push(Span::styled(" profile  ", Style::default().fg(theme.dim)));
+            11
+        } else {
+            0
+        };
+        let max_msg_len = width.saturating_sub(right_len + 8 + prefix_len);
         let clean_msg = if msg.chars().count() > max_msg_len {
             let truncated: String = msg.chars().take(max_msg_len.saturating_sub(1)).collect();
             format!("{truncated}…")
@@ -450,13 +457,13 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
                 format!("[!] {clean_msg}"),
                 Style::default().fg(theme.err).add_modifier(Modifier::BOLD),
             ));
-            left_len += clean_msg.chars().count() + 4;
+            left_len += clean_msg.chars().count() + 4 + prefix_len;
         } else {
             left_spans.push(Span::styled(
                 format!("[ok] {clean_msg}"),
                 Style::default().fg(theme.ok).add_modifier(Modifier::BOLD),
             ));
-            left_len += clean_msg.chars().count() + 5;
+            left_len += clean_msg.chars().count() + 5 + prefix_len;
         }
     } else if let Some((clamp_hint, _)) = &app.fan_clamp_hint {
         let max_hint_len = width.saturating_sub(right_len + 6);
@@ -511,8 +518,20 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
                         match app.aura_selected_field {
                             0 => vec![("h/l", "brightness")],
                             1 => vec![("h/l", "mode")],
-                            2 => vec![("h/l", "preset"), ("c", "picker"), ("#", "hex")],
-                            3..=5 => vec![("h/l", "adjust channel")],
+                            2 => {
+                                if crate::ui::aura::supports_custom_color(app) {
+                                    vec![("h/l", "preset"), ("c", "picker"), ("#", "hex")]
+                                } else {
+                                    vec![]
+                                }
+                            }
+                            3..=5 => {
+                                if crate::ui::aura::supports_custom_color(app) {
+                                    vec![("h/l", "adjust channel")]
+                                } else {
+                                    vec![]
+                                }
+                            }
                             6 => vec![("h/l", "secondary preset")],
                             7 => vec![("h/l", "speed")],
                             8 => vec![("h/l", "direction")],

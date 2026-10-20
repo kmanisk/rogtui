@@ -69,16 +69,30 @@ pub fn get_current_mode_index<B: Backend>(app: &AppState<B>) -> usize {
         SoftwareEffect::AudioPulse => 11,
         SoftwareEffect::AudioWave => 12,
         SoftwareEffect::AmbientLight => 13,
-        SoftwareEffect::Heatmap => 14,
-        SoftwareEffect::GpuMode => 15,
-        SoftwareEffect::BatteryStatus => 16,
-        SoftwareEffect::CpuLoad => 17,
+        SoftwareEffect::AmbientAudioSync => 14,
+        SoftwareEffect::Heatmap => 15,
+        SoftwareEffect::GpuMode => 16,
+        SoftwareEffect::BatteryStatus => 17,
+        SoftwareEffect::CpuLoad => 18,
         SoftwareEffect::None => match app.aura_mode {
             1 => 1,
             2 => 2,
             10 => 3,
             _ => 0,
         },
+    }
+}
+
+pub fn supports_custom_color<B: Backend>(app: &AppState<B>) -> bool {
+    if app.aura_brightness == 0 {
+        return false;
+    }
+    if app.active_software_effect != SoftwareEffect::None {
+        app.active_software_effect.supports_custom_colors()
+    } else {
+        // Firmware modes: Static (0), Breathe (1), Pulse (10 / 3)
+        // Rainbow (2) is hardware rainbow cycle and does NOT support custom colors!
+        matches!(app.aura_mode, 0 | 1 | 3 | 10)
     }
 }
 
@@ -96,7 +110,7 @@ pub fn is_aura_field_supported<B: Backend>(app: &AppState<B>, field: usize) -> b
 
     match field {
         0 | 1 | 9..=12 => true,
-        2..=5 => !is_firmware_rainbow,
+        2..=5 => supports_custom_color(app),
         6 => is_firmware_breathe,
         7 => is_animated,
         8 => has_direction,
@@ -110,17 +124,18 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let width = area.width as usize;
     let label_width = 18;
 
-    let base_lines = if app.aura_brightness == 0 {
+    let content_len = if app.aura_brightness == 0 {
         8
-    } else {
+    } else if supports_custom_color(app) {
         15
-    };
-    let spacers = crate::ui::widgets::distribute_spacers(area.height as usize, base_lines, 3, 2);
+    } else {
+        10
+    } + if app.has_slash_led { 3 } else { 0 };
+
+    let num_gaps = if app.has_slash_led { 2 } else { 1 };
+    let spacers = crate::ui::widgets::distribute_spacers(area.height as usize, content_len, num_gaps, 3);
 
     let mut lines = Vec::new();
-    for _ in 0..spacers[0] {
-        lines.push(Line::from(""));
-    }
 
     // -------------------------------------------------------------------------
     // 1. Lighting Controls
@@ -152,7 +167,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             "Static", "Breathe", "Rainbow", "Pulse",
             "Rainbow Wave", "Color Cycle", "Fire Flicker", "Clouds",
             "Theme Sync", "Strobe", "Voice Pulse", "Audio Pulse",
-            "Audio Wave", "Ambient Screen Sync", "Heatmap", "GPU Mode",
+            "Audio Wave", "Ambient Screen Sync", "Ambient Audio Sync", "Heatmap", "GPU Mode",
             "Battery Status", "CPU Load",
         ];
         let mode_idx = get_current_mode_index(app);
@@ -173,12 +188,13 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             9 => "High-contrast blinking pulse.",
             10 => "Speech reactive illumination via internal laptop microphone.",
             11 => "Real-time system audio playback reactive pulse.",
-            12 => "Multi-harmonic frequency spectrum lighting.",
+            12 => "Multi-harmonic audio spectrum EQ shifting across frequency hues.",
             13 => "Wayland display ambient color sync via grim.",
-            14 => "Thermal color gradient reflecting CPU and GPU temperatures.",
-            15 => "Reflects active GPU operating mode in color.",
-            16 => "Visual state-of-charge and charging indicator.",
-            17 => "Visual workload percentage monitor.",
+            14 => "Screen ambient color modulated by audio output playback rhythm.",
+            15 => "Thermal color gradient reflecting CPU and GPU temperatures.",
+            16 => "Reflects active GPU operating mode in color.",
+            17 => "Visual state-of-charge and charging indicator.",
+            18 => "Visual workload percentage monitor.",
             _ => "Keyboard lighting effect.",
         };
         lines.push(label_value_row("Effect details", vec![Span::styled(mode_desc, Style::default().fg(theme.dim))], false, label_width, theme));
@@ -271,7 +287,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         }
     }
 
-    for _ in 0..spacers[1] {
+    for _ in 0..spacers[0] {
         lines.push(Line::from(""));
     }
 
@@ -318,7 +334,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     ));
 
     if app.has_slash_led {
-        for _ in 0..spacers[1] {
+        for _ in 0..spacers.get(1).copied().unwrap_or(0) {
             lines.push(Line::from(""));
         }
         lines.push(section_rule("Slash Lighting", width, theme));
@@ -333,10 +349,6 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         let b_idx = app.slash_brightness.clamp(0, 3) as usize;
         let b_spans = segmented_control(&b_opts, b_idx, is_slash_b_sel, theme);
         lines.push(label_value_row("Slash brightness", b_spans, is_slash_b_sel, label_width, theme));
-    }
-
-    for _ in 0..spacers[2] {
-        lines.push(Line::from(""));
     }
 
     f.render_widget(Paragraph::new(lines), area);

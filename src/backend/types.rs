@@ -19,6 +19,7 @@ pub enum SoftwareEffect {
     AudioPulse,
     AudioWave,
     AmbientLight,
+    AmbientAudioSync,
     // System Telemetry
     Heatmap,
     GpuMode,
@@ -39,6 +40,7 @@ impl SoftwareEffect {
             SoftwareEffect::AudioPulse,
             SoftwareEffect::AudioWave,
             SoftwareEffect::AmbientLight,
+            SoftwareEffect::AmbientAudioSync,
             SoftwareEffect::Heatmap,
             SoftwareEffect::GpuMode,
             SoftwareEffect::BatteryStatus,
@@ -59,11 +61,19 @@ impl SoftwareEffect {
                 | SoftwareEffect::AudioPulse
                 | SoftwareEffect::AudioWave
                 | SoftwareEffect::AmbientLight
+                | SoftwareEffect::AmbientAudioSync
         )
     }
 
     pub fn is_fast_effect(self) -> bool {
         self.is_animated()
+    }
+
+    pub fn supports_custom_colors(self) -> bool {
+        matches!(
+            self,
+            SoftwareEffect::Strobe | SoftwareEffect::VoicePulse | SoftwareEffect::AudioPulse
+        )
     }
 
     pub fn category(self) -> &'static str {
@@ -78,7 +88,8 @@ impl SoftwareEffect {
             SoftwareEffect::VoicePulse
             | SoftwareEffect::AudioPulse
             | SoftwareEffect::AudioWave
-            | SoftwareEffect::AmbientLight => "Audio & Visual Sync",
+            | SoftwareEffect::AmbientLight
+            | SoftwareEffect::AmbientAudioSync => "Audio & Visual Sync",
             SoftwareEffect::Heatmap
             | SoftwareEffect::GpuMode
             | SoftwareEffect::BatteryStatus
@@ -98,7 +109,8 @@ impl SoftwareEffect {
             SoftwareEffect::VoicePulse => "Voice Pulse (Mic)",
             SoftwareEffect::AudioPulse => "Audio Pulse",
             SoftwareEffect::AudioWave => "Audio Wave (Spectrum)",
-            SoftwareEffect::AmbientLight => "Ambient (Wayland)",
+            SoftwareEffect::AmbientLight => "Ambient Screen Sync",
+            SoftwareEffect::AmbientAudioSync => "Ambient Audio Sync",
             SoftwareEffect::Heatmap => "Heatmap",
             SoftwareEffect::GpuMode => "GPU Mode Indicator",
             SoftwareEffect::BatteryStatus => "Battery Status",
@@ -146,6 +158,10 @@ impl SoftwareEffect {
             SoftwareEffect::AmbientLight => {
                 "Real-time screen ambient sync on Wayland. Samples the display compositor via\n\
                  grim to continuously mirror movie, video, or game visuals on the keyboard."
+            }
+            SoftwareEffect::AmbientAudioSync => {
+                "Dual screen and audio fusion. Samples real-time display colors while pulsing\n\
+                 and modulating brightness with dynamic speaker playback rhythm."
             }
             SoftwareEffect::Heatmap => {
                 "Maps CPU/GPU temperature to keyboard color.\n\

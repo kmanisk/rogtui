@@ -250,7 +250,7 @@ async fn app_loop<B: backend::Backend>(
                 };
 
                 let effect_interval = match app.active_software_effect {
-                    SoftwareEffect::VoicePulse | SoftwareEffect::AudioPulse | SoftwareEffect::AudioWave => Duration::from_millis(50),
+                    SoftwareEffect::VoicePulse | SoftwareEffect::AudioPulse | SoftwareEffect::AudioWave | SoftwareEffect::AmbientAudioSync => Duration::from_millis(50),
                     SoftwareEffect::RainbowWave | SoftwareEffect::ColorCycle | SoftwareEffect::FireFlicker | SoftwareEffect::Clouds | SoftwareEffect::ThemeSync | SoftwareEffect::Strobe => Duration::from_millis(70),
                     SoftwareEffect::AmbientLight => Duration::from_millis(100),
                     SoftwareEffect::Heatmap | SoftwareEffect::GpuMode | SoftwareEffect::BatteryStatus | SoftwareEffect::CpuLoad => Duration::from_millis(1000),
