@@ -1,98 +1,66 @@
-# rogtui
+<div align="center">
+  <img src="assets/logo.png" alt="rogtui logo" width="128" height="128" />
+  <h1>rogtui</h1>
+  <p><strong>A sleek, lightweight hardware control center for ASUS ROG and TUF laptops on Linux.</strong></p>
+  <p>Like G-Helper, but built natively for your terminal. Fast, keyboard-driven, and zero bloat.</p>
 
-[![Crates.io](https://img.shields.io/crates/v/rogtui.svg)](https://crates.io/crates/rogtui)
-[![License: MIT / Apache-2.0](https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue.svg)](LICENSE)
-[![Platform: Linux](https://img.shields.io/badge/platform-Linux%20x86__64-lightgrey.svg)](https://kernel.org)
-[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Idle CPU: 0.0%](https://img.shields.io/badge/idle%20cpu-0.0%25-brightgreen.svg)]()
+  <p>
+    <a href="https://crates.io/crates/rogtui"><img src="https://img.shields.io/crates/v/rogtui.svg" alt="Crates.io" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue.svg" alt="License" /></a>
+    <a href="https://kernel.org"><img src="https://img.shields.io/badge/platform-Linux%20x86__64-lightgrey.svg" alt="Platform" /></a>
+    <img src="https://img.shields.io/badge/idle%20cpu-0.0%25-brightgreen.svg" alt="Idle CPU: 0.0%" />
+    <img src="https://img.shields.io/badge/memory-~4%20MB-brightgreen.svg" alt="Memory Footprint: ~4 MB" />
+  </p>
+</div>
 
-Zero-overhead, keyboard-driven hardware control center for ASUS ROG and TUF gaming laptops running Linux.
-
-Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly communicate with `asusd` and `supergfxd` via system D-Bus. Designed as a high-performance, resource-minimal replacement for heavy GUI control centers like Armoury Crate, ASUS Control Center, or G-Helper.
+---
 
 ![rogtui demonstration](assets/demo.gif)
 
-> For full-resolution 60 FPS video demonstration, see [assets/demo.mp4](assets/demo.mp4).
+> Full-resolution 60 FPS video demonstration available at [assets/demo.mp4](assets/demo.mp4).
 
 ---
 
-## Technical Architecture & Invariants
+## What Can rogtui Do?
 
-- **Startup Latency:** Less than 2 milliseconds from invocation to initial render.
-- **Idle CPU Footprint:** 0.0% CPU usage while running. Redraws are strictly event-driven (terminal events, user keystrokes, or incoming D-Bus property changes). No polling game loops.
-- **Memory Footprint:** Approximately 4.0 MiB RSS resident memory.
-- **Binary Footprint:** ~2.4 MiB compiled stripped ELF binary.
-- **Asynchronous IPC:** Native system D-Bus interfaces (`xyz.ljones.Asusd`, `org.supergfxctl.Daemon`) without subprocess forks or shell exec wrappers during normal operation.
-- **Safety Clamps:** Monotonic non-decreasing fan curve validation prevents thermal runaway; minimum 30% PWM floor enforced at temperatures above 80°C.
-- **Zero Text Clipping:** Responsive layout architecture adapts across terminal sizes (tested from minimal 80x24 up to full 4K ultra-wide).
+`rogtui` provides full hardware control for ASUS ROG and TUF laptops through a clean, modern terminal interface. Built in pure Rust, it launches in under 2ms, uses 0.0% CPU when idle, and speaks directly to `asusd` and `supergfxd` over system D-Bus.
 
----
+### Performance & Fan Curve Studio
+- **Instant Profile Switching:** Toggle between Quiet, Balanced, and Performance modes on the fly (`p`).
+- **8-Point Custom Fan Curves:** Calibrate custom temperature-to-PWM fan curves for CPU and GPU fans with live thermal marker tracking (`◆`).
+- **AC / Battery Auto-Switching:** Automatically switch profiles when connecting or disconnecting the charger.
+- **Safety Clamps:** Enforces non-decreasing fan curves and emergency cooling minimums above 80°C.
 
-## Hardware Compatibility
+### Battery Lifespan & Power
+- **Health Charge Limiter:** Set charging caps at 60% or 80% to prolong battery lifespan.
+- **One-Shot Travel Override:** Charge to 100% for travel with a single keystroke (`Start ↵`), automatically resetting back to your health limit once unplugged.
+- **Live Battery Wattage:** Real-time charge and discharge rates with threshold indicators.
 
-`rogtui` supports all ASUS gaming laptops powered by the Linux kernel ASUS WMI drivers and the `asus-linux.org` daemon stack (`asusd` / `supergfxd`):
+### 18 Dynamic RGB Effects & Reactive Audio
+- **Hardware Aura Modes:** Static, Breathe (with synchronized primary & secondary colors), Rainbow Cycle, and Pulse.
+- **Microphone Voice Pulse:** Keyboard illuminates and dances in real-time to speech picked up by your microphone, complete with an adjustable sensitivity meter.
+- **Audio Pulse & Wave:** Cava-style frequency spectrum visualizer directly across your keyboard backlight.
+- **Ambient Screen Sync:** Matches keyboard colors to your active desktop window or wallpaper via Wayland.
+- **Dynamic Desktop Theme Sync:** Smart palette detection synchronizes your keyboard with your active desktop theme and terminal accent colors.
+- **Background Daemon:** Keep software RGB effects running smoothly in the background even after exiting (`rogtui-close` / `rogtui --daemon`, <0.2% CPU).
+- **Slash LED Controls:** Automatically detected on supported Zephyrus models.
+- **Interactive Color Picker:** 24-bit RGB/HSV color picker modal (`c`) and direct hex entry (`#`).
 
-| Product Family | Supported Models |
-| :--- | :--- |
-| **ROG Zephyrus** | G14, G15, G16, M16, Duo 15/16 (SE/GX series), Slash LED models |
-| **ROG Strix / SCAR** | Strix G15/G16/G17/G18, SCAR 15/16/17/18 (G533, G733, G634, G834) |
-| **TUF Gaming** | A15, A16, F15, F16, Dash F15 (FA506, FA507, FX506, FX507, FX607, FX608) |
-| **ROG Flow** | X13, X16, Z13 tablet |
-| **ROG Handhelds** | ROG Ally (RC71L), ROG Ally X |
+### Live Telemetry Dashboard
+- **Sensor Monitoring:** Instant CPU and GPU temperatures with 2-minute Braille history charts.
+- **Accurate Power Draw:** Real-time CPU package power in Watts and dGPU power monitoring (gracefully indicating `D3cold (0 W)` when suspended).
+- **Aligned Specifications:** Clean hardware summary with memory, processor, and graphics telemetry.
 
-### System Prerequisites
-- Linux Kernel 6.1+ with `asus_wmi` and `asus_nb_wmi` modules loaded
-- `asusd` v6.5.0 or newer (`systemctl is-active asusd`)
-- `supergfxd` v5.2.7 or newer (`systemctl is-active supergfxd`) for dynamic GPU switching
-
----
-
-## Tab Overview & Feature Matrix
-
-### 1. Dash (Overview & Live Telemetry)
-- **Live Wattage Tracking:** Aligned CPU package power consumption via Intel RAPL microjoule delta counter (`intel-rapl:0/energy_uj`), dGPU board power via dynamic NVML query (reporting `D3cold (0 W)` when offloaded GPU is suspended), and live battery charge/discharge rate.
-- **Dual Temperature History:** Full-width dual Braille graphs displaying recent 2-minute temperature history for CPU and GPU over a linear 30-100°C scale.
-- **Aligned Specifications:** Precise vertical alignment of CPU model, dGPU model, and battery capacity indicators.
-- **Persistent Profile Indicator:** Quick profile switcher indicator (`p`) remains visible across view changes.
-
-### 2. Power (Profiles, Triggers & Battery Lifespan)
-- **Platform Profiles:** Instant switching between Quiet, Balanced, and Performance modes.
-- **AC/DC Automatic Profile Transitions:** Define custom platform profiles triggered automatically on AC connection (`When plugged in`) vs disconnection (`On battery`).
-- **Battery Health Limiter:** Stepped slider from 40% to 100% charge threshold with optimal lifespan indicators at 60% and 80%.
-- **One-Shot Travel Override:** `[ Start ↵ ]` triggers a temporary charge to 100% for travel, automatically disengaging and reverting to configured lifespan limit upon charger disconnect.
-
-### 3. Fan (8-Point Curve Calibration Studio)
-- **True 8-Point EC Curves:** Calibrate independent PWM-to-temperature response curves for CPU and GPU fans.
-- **Operating State Marker:** Real-time indicator (`◆`) plots current thermal and fan operating coordinates along the active curve.
-- **Validation Engine:** Enforces non-decreasing monotonicity across points and prevents unsafe low fan speeds at high temperatures.
-- **Hardware Integration:** Toggle custom curves on/off (`c`), apply staged changes to hardware EC (`w`), or restore factory BIOS curves (`r`).
-
-### 4. RGB (Firmware Modes, Software Animations & Audio Reactive)
-- **4-Stage Brightness:** Off, Low, Medium, and High states with instant blackout guardrails.
-- **Firmware Modes:** Static, Breathe (with independent Primary & Secondary color synchronization, speed, and direction), Rainbow Cycle, and Pulse.
-- **Software Animations:** Rainbow Wave (360-degree spectrum sweep), Color Cycle, Fireplace Embers, Clouds, Strobe / Flash, Heatmap (temperature-reactive palette), GPU Mode, Battery Status, and CPU Load.
-- **Audio Pulse & Reactive Spectrum:**
-  - **Voice Pulse:** Speech-reactive lighting via the internal microphone (`ghelper-audio` / clean audio inputs prioritized) with an adjustable sensitivity ratio meter.
-  - **Audio Pulse:** Amplitude-reactive illumination driven by speaker output.
-  - **Audio Wave:** Continuous Cava-style frequency spectrum EQ lighting with dynamic hue interpolation.
-- **Desktop Synchronization:**
-  - **Ambient Screen Sync:** Wayland desktop screen color sampling via `grim`.
-  - **Ambient Audio Sync:** Merges desktop color sampling with live audio amplitude dynamics.
-  - **Dynamic Theme Sync:** Dynamically inspects desktop theme and terminal colors (`~/.local/state/theme/colors.sh`), prioritizing vibrant accent colors.
-- **Color Tools:** 24-bit RGB/HSV color picker modal (`c`) and direct 6-digit hex input buffer (`#`).
-- **Power State Control:** Discrete toggles for Boot, Awake, Sleep, and Shutdown lighting states.
-- **Slash LED Support:** Automatically detected for Zephyrus lids with dedicated animation and brightness controls.
-
-### 5. System (Display, Graphics & Diagnostics)
-- **Display Configuration:** Panel Overdrive (3ms response overdrive toggle) and Screen Auto-Brightness.
-- **Graphics MUX Integration:** View and trigger dedicated GPU MUX switching modes (Integrated, Hybrid, AsusMuxDgpu).
-- **Diagnostics Export:** One-key diagnostic generation (`y` or `[ Run ↵ ]`) writing full system health, sysfs, and D-Bus reports to `~/.local/state/rogtui/report-<timestamp>.md`.
+### Display & Graphics MUX
+- **Panel Overdrive:** Toggle 3ms response time overdrive on supported high-refresh panels.
+- **GPU Mode Switching:** Integrated, Hybrid, and dedicated GPU MUX switching integration via `supergfxd`.
+- **System Diagnostics:** Export comprehensive markdown diagnostic reports with one key (`y`).
 
 ---
 
-## Visual Showcase
+## Screenshots
 
-| Dashboard & Telemetry | Fan Curve Studio |
+| Telemetry Dashboard | Fan Curve Calibration |
 | :---: | :---: |
 | ![Dashboard](assets/screenshot_dashboard.png) | ![Fan Curves](assets/screenshot_fan.png) |
 
@@ -104,19 +72,15 @@ Built in pure Rust (`ratatui`, `crossterm`, `tokio`, `zbus`) to directly communi
 
 ## Installation
 
-### Arch Linux / CachyOS (AUR)
+> Note: AUR package registration is temporarily closed upstream due to an Arch Linux automated account creation pause. In the meantime, install directly via Cargo or compile locally using the included PKGBUILD.
 
-Install via your preferred AUR helper:
+### Cargo (crates.io)
 
 ```bash
-# Using yay
-yay -S rogtui-git
-
-# Using paru
-paru -S rogtui-git
+cargo install rogtui
 ```
 
-Or build locally with `makepkg`:
+### Arch Linux / CachyOS (Local PKGBUILD)
 
 ```bash
 git clone https://github.com/manisk/rogtui.git
@@ -124,122 +88,75 @@ cd rogtui
 makepkg -si
 ```
 
-### Cargo (Crates.io)
-
-```bash
-cargo install rogtui
-```
-
 ### Build from Source
 
-Ensure Rust and Cargo (version 1.80 or later) are installed:
+Requires Rust 1.80+:
 
 ```bash
 git clone https://github.com/manisk/rogtui.git
 cd rogtui
-
-# Compile release binary with Link-Time Optimization (LTO)
 cargo build --release
-
-# Install binary to local user bin
 install -Dm755 target/release/rogtui ~/.local/bin/rogtui
 ```
 
 ---
 
-## Background Daemon (`rogtui-close` / `--daemon`)
+## Controls & Shortcuts
 
-Software RGB animations, reactive microphone meters, and screen color sync can persist in the background after closing the TUI interface with negligible resource utilization:
-
-- **Resource Consumption:** Consistently less than 0.2% CPU and ~6 MiB RSS.
-- **Launching Daemon:** Run `rogtui --daemon` or trigger background detach upon exit.
-- **Terminating Daemon:** Run `rogtui-close` or `pkill -f "rogtui --daemon"`.
-
----
-
-## CLI Options
-
-```bash
-rogtui [OPTIONS] [COMMAND]
-
-Commands:
-  probe-modes       Sweep keyboard RGB modes 0-12 interactively to audit physical presets
-
-Options:
-  --daemon          Run active software RGB effect in the background headlessly
-  --check           Validate system support, daemons, and exit with diagnostic report
-  --mock            Run with simulated mock hardware (for testing without ASUS daemons)
-  --no-color        Disable ANSI color sequences (monochrome mode)
-  --ascii           Use pure ASCII box-drawing characters
-  -h, --help        Display help message
-  -v, -V, --version Display version information
-```
-
----
-
-## Keyboard Navigation
-
-| Key | Context | Description |
+| Key | Context | Action |
 | :--- | :--- | :--- |
-| `Tab` / `Shift+Tab` | Global | Cycle to next / previous tab |
-| `1` .. `5` | Global | Direct jump to tab (Dash, Power, Fan, RGB, System) |
-| `j` / `k` or `Up` / `Down` | List Views | Move selection up / down |
-| `h` / `l` or `Left` / `Right` | Controls | Decrease / increase value, toggle option, or cycle presets |
-| `Enter` / `Space` | Controls | Execute action, confirm modal, toggle state, or open color picker |
-| `c` | RGB / Fan | Open 24-bit RGB color picker (RGB) / toggle custom curve (Fan) |
+| `Tab` / `Shift+Tab` | Global | Switch to next / previous tab |
+| `1` .. `5` | Global | Jump directly to Dash, Power, Fan, RGB, or System |
+| `j` / `k` or `Up` / `Down` | Lists | Navigate controls and menu items |
+| `h` / `l` or `Left` / `Right` | Sliders / Menus | Adjust values, change presets, or cycle options |
+| `Enter` / `Space` | Controls | Activate button, confirm modal, or open color picker |
+| `c` | RGB / Fan | Open color picker modal (RGB) / toggle custom fan curve (Fan) |
 | `#` | RGB | Enter 6-digit hex color directly (e.g. `ff4080`) |
 | `p` | Global | Quick cycle active Platform Profile |
 | `w` | Fan | Write staged fan curve to hardware EC |
 | `r` | Fan | Reset selected fan curve to factory BIOS defaults |
-| `s` | Fan | Cycle fan presets (Quiet, Balanced, Performance) |
 | `f` | Fan | Toggle CPU / GPU fan curve selection |
-| `y` | System | Export full system diagnostics report |
-| `?` | Global | Open / close keyboard shortcuts overlay |
-| `q` / `Esc` | Global | Close overlay / cancel confirmation modal / exit application |
+| `y` | System | Export full markdown diagnostic report |
+| `?` | Global | Open keyboard shortcuts help modal |
+| `q` / `Esc` | Global | Dismiss modal / exit application |
 
 ---
 
-## Troubleshooting
+## Background Daemon
 
-### Built-in System Check
-Run the comprehensive self-check to verify permissions, kernel modules, and D-Bus interfaces:
-```bash
-rogtui --check
-```
+Software RGB animations, reactive microphone meters, and ambient screen sync can run headlessly after closing the UI:
 
-### Daemon Connection Failure
-If `rogtui` reports `Error: Unable to connect to system DBus services`:
-1. Verify `asusd` and `supergfxd` service states:
-   ```bash
-   sudo systemctl status asusd.service supergfxd.service
-   ```
-2. Enable and start missing services:
-   ```bash
-   sudo systemctl enable --now asusd.service supergfxd.service
-   ```
+- **Launch background daemon:** `rogtui --daemon`
+- **Stop background daemon:** `rogtui-close` or `pkill -f "rogtui --daemon"`
+- **Resource overhead:** Consistently under 0.2% CPU and ~6 MiB RSS.
 
-### Running in Mock Mode
-To test `rogtui` on non-ASUS systems, continuous integration runners, or virtual machines:
-```bash
-rogtui --mock
-```
+---
+
+## Hardware Compatibility
+
+`rogtui` supports all ASUS laptops supported by the Linux kernel ASUS WMI drivers and the `asus-linux.org` daemon stack:
+
+- **ROG Zephyrus:** G14, G15, G16, M16, Duo 15/16
+- **ROG Strix / SCAR:** Strix G15-G18, SCAR 15-18
+- **TUF Gaming:** A15, A16, F15, F16, Dash series (FA506, FA507, FX506, FX507, FX607, FX608)
+- **ROG Flow & Handhelds:** X13, X16, Z13, ROG Ally, ROG Ally X
+
+### Requirements
+- Linux kernel 6.1+ with `asus_wmi` module
+- `asusd` v6.5.0+ (`systemctl is-active asusd`)
+- `supergfxd` v5.2.7+ (for GPU switching)
 
 ---
 
 ## Documentation
 
-- [`docs/rogtui-hardware-control.md`](docs/rogtui-hardware-control.md): Deep-dive architecture of the 18 Aura modes, G-Helper screen & audio algorithms, fan curve mathematics, and power management.
-- [`docs/asusctl-architecture-and-effects.md`](docs/asusctl-architecture-and-effects.md): Complete ASUS hardware architecture, kernel WMI sysfs ABI, D-Bus endpoints, and performance overhead metrics.
-- [`docs/parity.md`](docs/parity.md): Full feature parity matrix comparing `rogtui` with ROG Control Center (`rog-control-center`).
-- [`docs/keyboard-probe.md`](docs/keyboard-probe.md): Hardware verification and probe results for keyboard LED modes.
-- [`docs/endpoints.md`](docs/endpoints.md): Complete mapping of all discovered D-Bus properties, methods, and sysfs paths to their UI components.
+For technical specifications, D-Bus interfaces, and architecture deep-dives:
+- [`docs/rogtui-hardware-control.md`](docs/rogtui-hardware-control.md): Hardware control architecture and Aura algorithms.
+- [`docs/asusctl-architecture-and-effects.md`](docs/asusctl-architecture-and-effects.md): Complete D-Bus endpoints and sysfs telemetry.
+- [`docs/parity.md`](docs/parity.md): Feature parity comparison with Armoury Crate and G-Helper.
 
 ---
 
 ## License
 
-Licensed under either of:
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
+Licensed under either of Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE)) or MIT license ([LICENSE-MIT](LICENSE-MIT)) at your option.

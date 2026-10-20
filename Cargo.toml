@@ -6,6 +6,16 @@ authors = ["Kumar Manisk <mathewmanisk699@gmail.com>"]
 description = "Fast, minimal, hardware-direct TUI for ASUS ROG and TUF gaming laptops"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/manisk/rogtui"
+homepage = "https://github.com/manisk/rogtui"
+documentation = "https://docs.rs/rogtui"
+keywords = ["asus", "rog", "tuf", "tui", "hardware"]
+categories = ["command-line-utilities", "hardware-support"]
+exclude = [
+    "assets/demo.mp4",
+    "assets/demo.gif",
+    "assets/rogtui-recording.mp4",
+]
 
 [dependencies]
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
