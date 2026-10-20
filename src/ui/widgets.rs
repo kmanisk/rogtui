@@ -507,38 +507,22 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
                 ],
                 ActiveTab::Aura => {
                     if app.aura_brightness == 0 {
-                        match app.aura_selected_field {
-                            0 => vec![("h/l", "brightness")],
-                            9..=12 => vec![("Space", "toggle")],
-                            13 => vec![("h/l", "slash mode")],
-                            14 => vec![("h/l", "slash brightness")],
-                            _ => vec![("h/l", "brightness")],
-                        }
+                        vec![("b", "brightness on"), ("h/l", "adjust")]
                     } else {
                         match app.aura_selected_field {
-                            0 => vec![("h/l", "brightness")],
-                            1 => vec![("h/l", "mode")],
                             2 => {
                                 if crate::ui::aura::supports_custom_color(app) {
-                                    vec![("h/l", "preset"), ("c", "picker"), ("#", "hex")]
+                                    vec![("p/P", "preset"), ("m/M", "mode"), ("c", "picker"), ("#", "hex")]
                                 } else {
-                                    vec![]
+                                    vec![("m/M", "mode"), ("b/B", "brightness")]
                                 }
                             }
                             3..=5 => {
-                                if crate::ui::aura::supports_custom_color(app) {
-                                    vec![("h/l", "adjust channel")]
-                                } else {
-                                    vec![]
-                                }
+                                vec![("h/l", "adjust channel"), ("c", "picker"), ("#", "hex"), ("Enter", "confirm")]
                             }
-                            6 => vec![("h/l", "secondary preset")],
-                            7 => vec![("h/l", "speed")],
-                            8 => vec![("h/l", "direction")],
-                            9..=12 => vec![("Space", "toggle")],
-                            13 => vec![("h/l", "slash mode")],
-                            14 => vec![("h/l", "slash brightness")],
-                            _ => vec![("h/l", "adjust")],
+                            _ => {
+                                vec![("m/M", "mode"), ("p/P", "preset"), ("b/B", "brightness"), ("c", "picker")]
+                            }
                         }
                     }
                 }

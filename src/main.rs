@@ -25,7 +25,15 @@ fn print_usage() {
     println!("Usage: rogtui [OPTIONS] [COMMAND]");
     println!();
     println!("Commands:");
-    println!("  probe-modes   Sweep keyboard RGB modes 0-12 interactively to audit physical presets");
+    println!("  probe-modes    Sweep keyboard RGB modes 0-12 interactively to audit physical presets");
+    println!("  aura <action>  Control RGB lighting directly (ideal for WM/DE keybindings)");
+    println!("      next-mode      Cycle to next RGB effect / mode");
+    println!("      prev-mode      Cycle to previous RGB effect / mode");
+    println!("      next-preset    Cycle to next RGB color preset");
+    println!("      prev-preset    Cycle to previous RGB color preset");
+    println!("      toggle         Toggle keyboard backlight on/off");
+    println!("      brightness <+|-|0-3> Adjust keyboard backlight brightness");
+    println!("      status         Print current RGB mode, preset, and brightness");
     println!();
     println!("Options:");
     println!("  --check       Validate system support, daemons, and exit with diagnostic report");
@@ -115,6 +123,118 @@ async fn run_check() -> anyhow::Result<()> {
     }
 }
 
+async fn run_aura_cli(subargs: &[String]) -> anyhow::Result<()> {
+    let backend = match RealBackend::connect().await {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("[error] Failed to connect to ASUS hardware backend: {e}");
+            std::process::exit(1);
+        }
+    };
+    let mut app = AppState::new(backend).await?;
+    if let Some(state) = rogtui::daemon::load_state() {
+        app.active_software_effect = state.effect;
+        if app.aura_brightness > 0 {
+            app.aura_brightness = state.brightness;
+        }
+        app.aura_data.speed = state.speed;
+        app.aura_data.color1 = state.color1;
+        app.aura_data.color2 = state.color2;
+        app.voice_sensitivity = state.voice_sensitivity;
+        app.user_custom_color = state.color1 != rogtui::ui::aura::SENTINEL_DYNAMIC_THEME
+            && state.color1 != rogtui::ui::aura::SENTINEL_SPECTRUM_CYCLE;
+    }
+
+    let cmd = if subargs[0] == "aura" || subargs[0] == "rgb" {
+        subargs.get(1).map(|s| s.as_str()).unwrap_or("status")
+    } else {
+        subargs[0].as_str()
+    };
+
+    match cmd {
+        "next-mode" | "next-effect" | "next" => {
+            rogtui::handler::cycle_aura_mode(&mut app, 1).await;
+            if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
+                rogtui::daemon::spawn_daemon_process();
+            } else {
+                let _ = rogtui::daemon::stop_daemon();
+            }
+        }
+        "prev-mode" | "prev-effect" | "prev" => {
+            rogtui::handler::cycle_aura_mode(&mut app, -1).await;
+            if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
+                rogtui::daemon::spawn_daemon_process();
+            } else {
+                let _ = rogtui::daemon::stop_daemon();
+            }
+        }
+        "next-preset" => {
+            rogtui::handler::cycle_aura_preset(&mut app, 1).await;
+            if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
+                rogtui::daemon::spawn_daemon_process();
+            }
+        }
+        "prev-preset" => {
+            rogtui::handler::cycle_aura_preset(&mut app, -1).await;
+            if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
+                rogtui::daemon::spawn_daemon_process();
+            }
+        }
+        "toggle" | "toggle-rgb" => {
+            let next_b = if app.aura_brightness == 0 { 3 } else { 0 };
+            let dir = next_b as i32 - app.aura_brightness as i32;
+            rogtui::handler::cycle_aura_brightness(&mut app, dir).await;
+            if app.aura_brightness == 0 {
+                let _ = rogtui::daemon::stop_daemon();
+            } else if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None {
+                rogtui::daemon::spawn_daemon_process();
+            }
+        }
+        "brightness" => {
+            let dir = match subargs.get(2).map(|s| s.as_str()) {
+                Some("up") | Some("+") => 1,
+                Some("down") | Some("-") => -1,
+                Some("off") | Some("0") => 0 - app.aura_brightness as i32,
+                Some("low") | Some("1") => 1 - app.aura_brightness as i32,
+                Some("med") | Some("2") => 2 - app.aura_brightness as i32,
+                Some("high") | Some("3") => 3 - app.aura_brightness as i32,
+                _ => 1,
+            };
+            rogtui::handler::cycle_aura_brightness(&mut app, dir).await;
+            if app.aura_brightness == 0 {
+                let _ = rogtui::daemon::stop_daemon();
+            } else if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None {
+                rogtui::daemon::spawn_daemon_process();
+            }
+        }
+        "status" => {
+            let mode_name = match app.active_software_effect {
+                rogtui::backend::types::SoftwareEffect::None => match app.aura_mode {
+                    1 => "Breathe",
+                    2 => "Rainbow",
+                    10 => "Pulse",
+                    _ => "Static",
+                },
+                e => e.label(),
+            };
+            let preset_name = rogtui::ui::aura::get_active_preset_name(app.aura_data.color1);
+            let b_names = ["Off", "Low", "Med", "High"];
+            let b_str = b_names[app.aura_brightness.clamp(0, 3) as usize];
+            println!("Aura Lighting: Mode = {mode_name} | Preset = {preset_name} | Brightness = {b_str}");
+            return Ok(());
+        }
+        other => {
+            eprintln!("[error] Unknown aura command '{other}'. Available: next-mode, prev-mode, next-preset, prev-preset, toggle, brightness, status");
+            std::process::exit(1);
+        }
+    }
+
+    if let Some((msg, _, _)) = app.status_message {
+        println!("[ok] {msg}");
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|a| a == "-h" || a == "--help") {
@@ -156,6 +276,17 @@ fn main() -> anyhow::Result<()> {
     }
     if args.iter().any(|a| a == "probe-modes") {
         return rt.block_on(rogtui::probe::run_probe());
+    }
+    if args.len() > 1
+        && (args[1] == "aura"
+            || args[1] == "rgb"
+            || args[1] == "next-effect"
+            || args[1] == "prev-effect"
+            || args[1] == "next-preset"
+            || args[1] == "prev-preset"
+            || args[1] == "toggle-rgb")
+    {
+        return rt.block_on(run_aura_cli(&args[1..]));
     }
 
     let use_mock = args.iter().any(|a| a == "--mock");

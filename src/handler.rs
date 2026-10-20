@@ -305,7 +305,7 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
         KeyCode::Char('3') => { app.current_tab = ActiveTab::FanCurves; return; }
         KeyCode::Char('4') => { app.current_tab = ActiveTab::Aura; return; }
         KeyCode::Char('5') => { app.current_tab = ActiveTab::System; return; }
-        KeyCode::Char('p') => {
+        KeyCode::Char('p') if app.current_tab != ActiveTab::Aura => {
             let next_p = match app.platform_profile {
                 PlatformProfile::Quiet => PlatformProfile::Balanced,
                 PlatformProfile::Balanced => PlatformProfile::Performance,
@@ -897,6 +897,24 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
         KeyCode::Right | KeyCode::Char('l') => {
             adjust_aura_field(app, 1).await;
         }
+        KeyCode::Char('m') => {
+            cycle_aura_mode(app, 1).await;
+        }
+        KeyCode::Char('M') => {
+            cycle_aura_mode(app, -1).await;
+        }
+        KeyCode::Char('p') => {
+            cycle_aura_preset(app, 1).await;
+        }
+        KeyCode::Char('P') => {
+            cycle_aura_preset(app, -1).await;
+        }
+        KeyCode::Char('b') => {
+            cycle_aura_brightness(app, 1).await;
+        }
+        KeyCode::Char('B') => {
+            cycle_aura_brightness(app, -1).await;
+        }
         KeyCode::Char('c') => {
             if app.aura_brightness == 0 || !crate::ui::aura::supports_custom_color(app) {
                 return;
@@ -952,6 +970,133 @@ async fn activate_software_mode<B: Backend>(app: &mut AppState<B>, effect: Softw
     app.set_status(status_msg, false);
 }
 
+pub async fn cycle_aura_brightness<B: Backend>(app: &mut AppState<B>, dir: i32) {
+    let prev_b = app.aura_brightness;
+    let b = (prev_b as i32 + dir).clamp(0, 3) as u32;
+    app.aura_brightness = b;
+    let _ = app.backend.set_aura_brightness(b).await;
+    if b == 0 {
+        if (1..=8).contains(&app.aura_selected_field) {
+            app.aura_selected_field = 0;
+        }
+        if app.active_software_effect != SoftwareEffect::None {
+            app.saved_software_effect = Some(app.active_software_effect);
+        }
+        app.last_effect_color = None;
+        let _ = app.backend.write_volatile_rgb(RgbColor::new(0, 0, 0)).await;
+    } else {
+        if prev_b == 0 {
+            if let Some(saved) = app.saved_software_effect.take() {
+                app.active_software_effect = saved;
+            }
+        }
+        app.last_effect_color = None;
+        if app.active_software_effect == SoftwareEffect::None {
+            let _ = app.backend.set_aura_mode(app.aura_mode).await;
+            let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            if app.aura_mode == 0 {
+                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+            }
+        } else {
+            app.apply_software_effect().await;
+        }
+    }
+    let _ = crate::daemon::save_state(app);
+    let b_names = ["Off", "Low", "Med", "High"];
+    app.set_status(format!("Aura Brightness: {}", b_names[b as usize]), false);
+}
+
+pub async fn cycle_aura_mode<B: Backend>(app: &mut AppState<B>, dir: i32) {
+    if app.aura_brightness == 0 {
+        return;
+    }
+    let current_idx = crate::ui::aura::get_current_mode_index(app) as i32;
+    let next_idx = ((current_idx + dir + 19) % 19) as usize;
+    match next_idx {
+        0 => {
+            app.active_software_effect = SoftwareEffect::None;
+            app.last_effect_color = None;
+            app.aura_mode = 0;
+            app.aura_data.mode = 0;
+            let _ = app.backend.set_aura_mode(0).await;
+            if app.aura_brightness > 0 {
+                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+            }
+            let _ = crate::daemon::save_state(app);
+            app.set_status("Aura Mode: Static", false);
+        }
+        1 => {
+            app.active_software_effect = SoftwareEffect::None;
+            app.last_effect_color = None;
+            app.aura_mode = 1;
+            app.aura_data.mode = 1;
+            let _ = app.backend.set_aura_mode(1).await;
+            let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            let _ = crate::daemon::save_state(app);
+            app.set_status("Aura Mode: Breathe", false);
+        }
+        2 => {
+            app.active_software_effect = SoftwareEffect::None;
+            app.last_effect_color = None;
+            app.aura_mode = 2;
+            app.aura_data.mode = 2;
+            let _ = app.backend.set_aura_mode(2).await;
+            let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            let _ = crate::daemon::save_state(app);
+            app.set_status("Aura Mode: Rainbow Cycle", false);
+        }
+        3 => {
+            app.active_software_effect = SoftwareEffect::None;
+            app.last_effect_color = None;
+            app.aura_mode = 10;
+            app.aura_data.mode = 10;
+            let _ = app.backend.set_aura_mode(10).await;
+            let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            let _ = crate::daemon::save_state(app);
+            app.set_status("Aura Mode: Pulse", false);
+        }
+        4 => activate_software_mode(app, SoftwareEffect::RainbowWave, "Rainbow Wave active (360° spectrum sweep)").await,
+        5 => activate_software_mode(app, SoftwareEffect::ColorCycle, "Color Cycle active (7 primary colors)").await,
+        6 => activate_software_mode(app, SoftwareEffect::FireFlicker, "Fire Flicker active (fireplace embers)").await,
+        7 => activate_software_mode(app, SoftwareEffect::Clouds, "Clouds active (calm cyan & sky blue drift)").await,
+        8 => activate_software_mode(app, SoftwareEffect::ThemeSync, "Theme Sync active (desktop palette sync)").await,
+        9 => activate_software_mode(app, SoftwareEffect::Strobe, "Strobe / Flash active (pulsing pulse)").await,
+        10 => activate_software_mode(app, SoftwareEffect::VoicePulse, "Voice Pulse active (speech reactive via clean mic)").await,
+        11 => activate_software_mode(app, SoftwareEffect::AudioPulse, "Audio Pulse active (speaker output reactive)").await,
+        12 => activate_software_mode(app, SoftwareEffect::AudioWave, "Audio Wave active (frequency spectrum EQ)").await,
+        13 => activate_software_mode(app, SoftwareEffect::AmbientLight, "Ambient Screen Sync active (Wayland screen sync)").await,
+        14 => activate_software_mode(app, SoftwareEffect::AmbientAudioSync, "Ambient Audio Sync active (Screen color + Audio dynamics)").await,
+        15 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
+        16 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
+        17 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
+        18 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
+        _ => {}
+    }
+}
+
+pub async fn cycle_aura_preset<B: Backend>(app: &mut AppState<B>, dir: i32) {
+    if app.aura_brightness == 0 || !crate::ui::aura::supports_custom_color(app) {
+        return;
+    }
+    let presets = crate::ui::aura::get_presets_for_app(app);
+    let cur_pos = presets.iter().position(|(_, p)| *p == app.aura_data.color1).unwrap_or(0);
+    let count = presets.len() as i32;
+    let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
+    app.aura_data.color1 = presets[next_pos].1;
+    app.user_custom_color = presets[next_pos].1 != crate::ui::aura::SENTINEL_DYNAMIC_THEME;
+    if app.aura_mode == 0 && app.aura_brightness > 0 {
+        let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+    } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+        let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+        let _ = app.backend.set_aura_mode(app.aura_mode).await;
+    } else {
+        app.apply_software_effect().await;
+    }
+    let _ = crate::daemon::save_state(app);
+    let preset_name = presets[next_pos].0;
+    app.set_status(format!("Preset applied: {}", preset_name), false);
+}
+
 async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
     if app.aura_brightness == 0 && (1..=8).contains(&app.aura_selected_field) {
         return;
@@ -960,120 +1105,9 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
         return;
     }
     match app.aura_selected_field {
-        0 => {
-            let prev_b = app.aura_brightness;
-            let b = (prev_b as i32 + dir).clamp(0, 3) as u32;
-            app.aura_brightness = b;
-            let _ = app.backend.set_aura_brightness(b).await;
-            if b == 0 {
-                if (1..=8).contains(&app.aura_selected_field) {
-                    app.aura_selected_field = 0;
-                }
-                if app.active_software_effect != SoftwareEffect::None {
-                    app.saved_software_effect = Some(app.active_software_effect);
-                }
-                app.last_effect_color = None;
-                let _ = app.backend.write_volatile_rgb(RgbColor::new(0, 0, 0)).await;
-            } else {
-                if prev_b == 0 {
-                    if let Some(saved) = app.saved_software_effect.take() {
-                        app.active_software_effect = saved;
-                    }
-                }
-                app.last_effect_color = None;
-                if app.active_software_effect == SoftwareEffect::None {
-                    let _ = app.backend.set_aura_mode(app.aura_mode).await;
-                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
-                    if app.aura_mode == 0 {
-                        let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
-                    }
-                } else {
-                    app.apply_software_effect().await;
-                }
-            }
-            let _ = crate::daemon::save_state(app);
-            let b_names = ["Off", "Low", "Med", "High"];
-            app.set_status(format!("Aura Brightness: {}", b_names[b as usize]), false);
-        }
-        1 => {
-            let current_idx = crate::ui::aura::get_current_mode_index(app) as i32;
-            let next_idx = ((current_idx + dir + 19) % 19) as usize;
-            match next_idx {
-                0 => {
-                    app.active_software_effect = SoftwareEffect::None;
-                    app.last_effect_color = None;
-                    app.aura_mode = 0;
-                    app.aura_data.mode = 0;
-                    let _ = app.backend.set_aura_mode(0).await;
-                    if app.aura_brightness > 0 {
-                        let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
-                    }
-                    app.set_status("Aura Mode: Static", false);
-                }
-                1 => {
-                    app.active_software_effect = SoftwareEffect::None;
-                    app.last_effect_color = None;
-                    app.aura_mode = 1;
-                    app.aura_data.mode = 1;
-                    let _ = app.backend.set_aura_mode(1).await;
-                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
-                    app.set_status("Aura Mode: Breathe", false);
-                }
-                2 => {
-                    app.active_software_effect = SoftwareEffect::None;
-                    app.last_effect_color = None;
-                    app.aura_mode = 2;
-                    app.aura_data.mode = 2;
-                    let _ = app.backend.set_aura_mode(2).await;
-                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
-                    app.set_status("Aura Mode: Rainbow Cycle", false);
-                }
-                3 => {
-                    app.active_software_effect = SoftwareEffect::None;
-                    app.last_effect_color = None;
-                    app.aura_mode = 10;
-                    app.aura_data.mode = 10;
-                    let _ = app.backend.set_aura_mode(10).await;
-                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
-                    app.set_status("Aura Mode: Pulse", false);
-                }
-                4 => activate_software_mode(app, SoftwareEffect::RainbowWave, "Rainbow Wave active (360° spectrum sweep)").await,
-                5 => activate_software_mode(app, SoftwareEffect::ColorCycle, "Color Cycle active (7 primary colors)").await,
-                6 => activate_software_mode(app, SoftwareEffect::FireFlicker, "Fire Flicker active (fireplace embers)").await,
-                7 => activate_software_mode(app, SoftwareEffect::Clouds, "Clouds active (calm cyan & sky blue drift)").await,
-                8 => activate_software_mode(app, SoftwareEffect::ThemeSync, "Theme Sync active (desktop palette sync)").await,
-                9 => activate_software_mode(app, SoftwareEffect::Strobe, "Strobe / Flash active (pulsing pulse)").await,
-                10 => activate_software_mode(app, SoftwareEffect::VoicePulse, "Voice Pulse active (speech reactive via clean mic)").await,
-                11 => activate_software_mode(app, SoftwareEffect::AudioPulse, "Audio Pulse active (speaker output reactive)").await,
-                12 => activate_software_mode(app, SoftwareEffect::AudioWave, "Audio Wave active (frequency spectrum EQ)").await,
-                13 => activate_software_mode(app, SoftwareEffect::AmbientLight, "Ambient Screen Sync active (Wayland screen sync)").await,
-                14 => activate_software_mode(app, SoftwareEffect::AmbientAudioSync, "Ambient Audio Sync active (Screen color + Audio dynamics)").await,
-                15 => activate_software_mode(app, SoftwareEffect::Heatmap, "Heatmap active (CPU/GPU temp -> color)").await,
-                16 => activate_software_mode(app, SoftwareEffect::GpuMode, "GPU Mode active (GPU mode -> color)").await,
-                17 => activate_software_mode(app, SoftwareEffect::BatteryStatus, "Battery Status active (charge state -> color)").await,
-                18 => activate_software_mode(app, SoftwareEffect::CpuLoad, "CPU Load active (load % -> color)").await,
-                _ => {}
-            }
-        }
-        2 => {
-            let presets = crate::ui::aura::get_presets_for_app(app);
-            let cur_pos = presets.iter().position(|(_, p)| *p == app.aura_data.color1).unwrap_or(0);
-            let count = presets.len() as i32;
-            let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
-            app.aura_data.color1 = presets[next_pos].1;
-            app.user_custom_color = presets[next_pos].1 != crate::ui::aura::SENTINEL_DYNAMIC_THEME;
-            if app.aura_mode == 0 && app.aura_brightness > 0 {
-                let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
-            } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
-                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
-                let _ = app.backend.set_aura_mode(app.aura_mode).await;
-            } else {
-                app.apply_software_effect().await;
-            }
-            let _ = crate::daemon::save_state(app);
-            let preset_name = presets[next_pos].0;
-            app.set_status(format!("Preset applied: {}", preset_name), false);
-        }
+        0 => cycle_aura_brightness(app, dir).await,
+        1 => cycle_aura_mode(app, dir).await,
+        2 => cycle_aura_preset(app, dir).await,
         3 => {
             let r = (app.aura_data.color1.r as i16 + (dir * 5) as i16).clamp(0, 255) as u8;
             app.aura_data.color1.r = r;
