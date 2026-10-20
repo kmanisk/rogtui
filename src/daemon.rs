@@ -54,11 +54,9 @@ pub fn stop_daemon() -> Result<bool> {
         }
         std::thread::sleep(Duration::from_millis(60));
         let _ = fs::remove_file(get_pid_file_path());
-        let _ = fs::remove_file(get_state_file_path());
         Ok(true)
     } else {
         let _ = fs::remove_file(get_pid_file_path());
-        let _ = fs::remove_file(get_state_file_path());
         Ok(false)
     }
 }

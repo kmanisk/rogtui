@@ -196,30 +196,39 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         let mode_name = mode_names.get(mode_idx).unwrap_or(&"Static");
 
         let mode_desc = match mode_idx {
-            0 => "Solid single-color illumination across keyboard zones.",
-            1 => "Sine-wave brightness breathing between primary and secondary colors.",
-            2 => "Hardware-timed spectrum wave traversing the keyboard matrix.",
-            3 => "Periodic quick flash pulses.",
-            4 => "Smooth continuous 360-degree spectrum sweep across the keyboard.",
-            5 => "Sequential smooth crossfade transitions through 7 primary colors.",
-            6 => "Organic fireplace flame simulation with shifting amber and red embers.",
-            7 => "Atmospheric drift between soft cyan, sky blue, and cloud white.",
-            8 => "Synchronizes keyboard lighting to active desktop theme.",
-            9 => "High-contrast blinking pulse.",
-            10 => "Speech reactive illumination via internal laptop microphone.",
-            11 => "Real-time system audio playback reactive pulse.",
-            12 => "Multi-harmonic audio spectrum EQ shifting across frequency hues.",
-            13 => "Wayland display ambient color sync via grim.",
-            14 => "Screen ambient color modulated by audio output playback rhythm.",
-            15 => "Thermal color gradient reflecting CPU and GPU temperatures.",
-            16 => "Reflects active GPU operating mode in color.",
-            17 => "Visual state-of-charge and charging indicator.",
-            18 => "Visual workload percentage monitor.",
+            0 => "Solid single-color backlight.",
+            1 => "Breathing brightness cycle.",
+            2 => "Hardware spectrum wave.",
+            3 => "Periodic flash pulses.",
+            4 => "Smooth 360° spectrum sweep.",
+            5 => "Smooth 7-color crossfade.",
+            6 => "Organic fireplace flames.",
+            7 => "Atmospheric cloud drift.",
+            8 => "Desktop theme color sync.",
+            9 => "High-contrast strobe blink.",
+            10 => "Microphone speech reactive.",
+            11 => "System audio playback pulse.",
+            12 => "Audio spectrum EQ wave.",
+            13 => "Wayland display ambient sync.",
+            14 => "Screen ambient + audio sync.",
+            15 => "Thermal CPU/GPU gradient.",
+            16 => "GPU operating mode color.",
+            17 => "Battery & charge status.",
+            18 => "System CPU workload monitor.",
             _ => "Keyboard lighting effect.",
         };
         let mut mode_spans = choice_widget(mode_name, app.aura_selected_field == 1, theme);
-        mode_spans.push(Span::raw("   "));
-        mode_spans.push(Span::styled(mode_desc, Style::default().fg(theme.dim)));
+        let prefix_len = label_width + 3 + mode_name.len() + 4 + 3;
+        if width > prefix_len + 8 {
+            let max_desc_len = width.saturating_sub(prefix_len + 3);
+            let display_desc = if mode_desc.len() > max_desc_len {
+                &mode_desc[..max_desc_len]
+            } else {
+                mode_desc
+            };
+            mode_spans.push(Span::raw("   "));
+            mode_spans.push(Span::styled(display_desc.to_string(), Style::default().fg(theme.dim)));
+        }
         lines.push(label_value_row("Mode", mode_spans, app.aura_selected_field == 1, label_width, theme));
 
         // Optional Speed & Direction or Voice Sensitivity if supported by active mode
@@ -278,13 +287,8 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
                 Color::Rgb(col.r, col.g, col.b)
             };
 
-            // Row: Preset with hotkey hints for Color Picker ('c') and Hex input ('#')
-            let mut preset_spans = choice_widget(preset_name, app.aura_selected_field == 2, theme);
-            preset_spans.push(Span::raw("   "));
-            preset_spans.push(Span::styled("c", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
-            preset_spans.push(Span::styled(" picker  ", Style::default().fg(theme.dim)));
-            preset_spans.push(Span::styled("#", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
-            preset_spans.push(Span::styled(" hex", Style::default().fg(theme.dim)));
+            // Row: Preset
+            let preset_spans = choice_widget(preset_name, app.aura_selected_field == 2, theme);
             lines.push(label_value_row("Preset", preset_spans, app.aura_selected_field == 2, label_width, theme));
 
             // Custom hex and R / G / B sliders only when Custom color is active

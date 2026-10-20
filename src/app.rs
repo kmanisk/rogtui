@@ -112,10 +112,8 @@ impl AudioCaptureService {
 
         self.running.store(true, Ordering::Relaxed);
         let running_clone = self.running.clone();
-        let is_mic = source.contains("SOURCE")
-            || source.contains("input")
-            || source.contains("mic")
-            || source.contains("ghelper");
+        let is_monitor = source.ends_with(".monitor") || source.contains(".monitor") || source == "@DEFAULT_MONITOR@";
+        let is_mic = !is_monitor;
         let output_atomic = if is_mic {
             self.mic_level.clone()
         } else {
@@ -320,29 +318,19 @@ impl AudioCaptureService {
         self.audio_level.store(val, Ordering::Relaxed);
     }
 
-    /// Automatically find the active audio output monitor on PipeWire/PulseAudio.
-    /// Priority: Active RUNNING monitor -> Default sink monitor -> Default monitor.
-    pub fn find_preferred_monitor_source() -> String {
-        // 1. Check for any currently RUNNING .monitor source (catches active DSP or application virtual sinks)
-        if let Ok(output) = std::process::Command::new("pactl")
-            .args(["list", "short", "sources"])
-            .output()
-        {
-            if output.status.success() {
-                let text = String::from_utf8_lossy(&output.stdout);
-                for line in text.lines() {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        let name = parts[1];
-                        if name.ends_with(".monitor") && line.contains("RUNNING") {
-                            return name.to_string();
-                        }
-                    }
-                }
-            }
-        }
+    pub fn is_monitoring(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
+            && self.current_source.as_ref().map_or(false, |s| s.ends_with(".monitor") || s.contains(".monitor") || s == "@DEFAULT_MONITOR@")
+    }
 
-        // 2. Fall back to default sink .monitor
+    pub fn is_mic_capturing(&self) -> bool {
+        self.running.load(Ordering::Relaxed)
+            && self.current_source.as_ref().map_or(false, |s| !s.ends_with(".monitor") && !s.contains(".monitor") && s != "@DEFAULT_MONITOR@")
+    }
+
+    /// Automatically find the active audio output monitor on PipeWire/PulseAudio.
+    /// Priority: Default sink monitor -> @DEFAULT_MONITOR@.
+    pub fn find_preferred_monitor_source() -> String {
         if let Ok(output) = std::process::Command::new("pactl")
             .arg("get-default-sink")
             .output()
@@ -351,25 +339,6 @@ impl AudioCaptureService {
                 let sink = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !sink.is_empty() {
                     return format!("{sink}.monitor");
-                }
-            }
-        }
-
-        // 3. Fall back to any monitor source
-        if let Ok(output) = std::process::Command::new("pactl")
-            .args(["list", "short", "sources"])
-            .output()
-        {
-            if output.status.success() {
-                let text = String::from_utf8_lossy(&output.stdout);
-                for line in text.lines() {
-                    let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.len() >= 2 {
-                        let name = parts[1];
-                        if name.ends_with(".monitor") {
-                            return name.to_string();
-                        }
-                    }
                 }
             }
         }
@@ -813,7 +782,18 @@ impl<B: Backend> AppState<B> {
         self.picker_slider_idx = 0;
         let col = if slot == 2 {
             self.aura_data.color2
+        } else if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
+            || self.aura_data.color1 == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE
+            || (self.aura_data.color1.r == 0
+                && self.aura_data.color1.g == 0
+                && self.aura_data.color1.b == 0)
+        {
+            let (_, sys_col) = crate::ui::theme::Theme::get_system_theme_color();
+            self.user_custom_color = true;
+            self.aura_data.color1 = sys_col;
+            sys_col
         } else {
+            self.user_custom_color = true;
             self.aura_data.color1
         };
         self.picker_initial_color = col;
@@ -862,7 +842,7 @@ impl<B: Backend> AppState<B> {
                     0 => "Adjusts keyboard LED backlight intensity (Off, Low, Med, High).".to_string(),
                     1 => match crate::ui::aura::get_current_mode_index(self) {
                         0 => "Single solid illumination across all keyboard zones.",
-                        1 => "Sine-wave brightness breathing between primary and secondary colors.",
+                        1 => "Sine-wave brightness breathing illumination.",
                         2 => "Hardware-timed spectrum wave traversing the keyboard matrix.",
                         3 => "Periodic quick flash pulses.",
                         4 => "Smooth continuous 360° spectrum sweep across the keyboard.",
@@ -1272,8 +1252,10 @@ impl<B: Backend> AppState<B> {
     /// At brightness 1 (Low), pulses between 0 (off) and 1 (lit) on speech sound.
     pub fn compute_voice_pulse_color(&mut self) -> RgbColor {
         self.audio_service.set_voice_sensitivity(self.voice_sensitivity);
-        let mic_source = AudioCaptureService::find_preferred_mic_source();
-        self.audio_service.start(&mic_source);
+        if !self.audio_service.is_mic_capturing() {
+            let mic_source = AudioCaptureService::find_preferred_mic_source();
+            self.audio_service.start(&mic_source);
+        }
         let level = self.audio_service.get_mic_level();
         self.mic_level = level;
 
@@ -1317,8 +1299,10 @@ impl<B: Backend> AppState<B> {
     /// Supports "Spectrum Cycle" preset where hues dynamically shift to beat rhythms like Cava.
     /// At brightness 1 (Low), pulses between 0 (off) and 1 (lit) on beat drops.
     pub fn compute_audio_pulse_color(&mut self) -> RgbColor {
-        let mon_source = AudioCaptureService::find_preferred_monitor_source();
-        self.audio_service.start(&mon_source);
+        if !self.audio_service.is_monitoring() {
+            let mon_source = AudioCaptureService::find_preferred_monitor_source();
+            self.audio_service.start(&mon_source);
+        }
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
 
@@ -1360,8 +1344,10 @@ impl<B: Backend> AppState<B> {
     /// Audio Wave: Dynamic audio spectrum EQ via non-blocking worker.
     /// Smoothly transitions color across the spectrum based on playback intensity.
     pub fn compute_audio_wave_color(&mut self) -> RgbColor {
-        let mon_source = AudioCaptureService::find_preferred_monitor_source();
-        self.audio_service.start(&mon_source);
+        if !self.audio_service.is_monitoring() {
+            let mon_source = AudioCaptureService::find_preferred_monitor_source();
+            self.audio_service.start(&mon_source);
+        }
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
 
@@ -1407,8 +1393,10 @@ impl<B: Backend> AppState<B> {
     /// while audio playback levels modulate the brightness and energy rhythm.
     pub fn compute_ambient_audio_sync_color(&mut self) -> RgbColor {
         self.ambient_service.start();
-        let mon_source = AudioCaptureService::find_preferred_monitor_source();
-        self.audio_service.start(&mon_source);
+        if !self.audio_service.is_monitoring() {
+            let mon_source = AudioCaptureService::find_preferred_monitor_source();
+            self.audio_service.start(&mon_source);
+        }
 
         let base_col = self.compute_ambient_color();
         let level = self.audio_service.get_audio_level();

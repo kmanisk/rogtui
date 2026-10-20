@@ -212,20 +212,23 @@ async fn app_loop<B: backend::Backend>(
         app.theme = Theme::monochrome();
     }
 
-    // If background RGB daemon was running, adopt its state and stop daemon process
-    if rogtui::daemon::is_daemon_running().is_some() {
-        if let Some(state) = rogtui::daemon::load_state() {
-            app.active_software_effect = state.effect;
+    // Restore persistent RGB effect and settings from saved state (whether daemon was running or not)
+    if let Some(state) = rogtui::daemon::load_state() {
+        app.active_software_effect = state.effect;
+        if app.aura_brightness > 0 {
             app.aura_brightness = state.brightness;
-            app.aura_data.speed = state.speed;
-            app.aura_data.color1 = state.color1;
-            app.aura_data.color2 = state.color2;
-            app.voice_sensitivity = state.voice_sensitivity;
-            app.user_custom_color = state.color1 != rogtui::ui::aura::SENTINEL_DYNAMIC_THEME;
-            if app.aura_brightness == 0 && app.active_software_effect != SoftwareEffect::None {
-                app.saved_software_effect = Some(app.active_software_effect);
-            }
         }
+        app.aura_data.speed = state.speed;
+        app.aura_data.color1 = state.color1;
+        app.aura_data.color2 = state.color2;
+        app.voice_sensitivity = state.voice_sensitivity;
+        app.user_custom_color = state.color1 != rogtui::ui::aura::SENTINEL_DYNAMIC_THEME
+            && state.color1 != rogtui::ui::aura::SENTINEL_SPECTRUM_CYCLE;
+        if app.aura_brightness == 0 && app.active_software_effect != SoftwareEffect::None {
+            app.saved_software_effect = Some(app.active_software_effect);
+        }
+    }
+    if rogtui::daemon::is_daemon_running().is_some() {
         let _ = rogtui::daemon::stop_daemon();
     }
 
@@ -321,11 +324,12 @@ async fn app_loop<B: backend::Backend>(
         }
     }
 
-    // If a software RGB effect was active, persist it in the background
+    // Always persist state so next launch restores user's selected mode and colors
+    let _ = rogtui::daemon::save_state(&app);
+
+    // If a software RGB effect was active and backlight is on, run headless daemon in background
     if app.active_software_effect != SoftwareEffect::None && app.aura_brightness > 0 {
-        if let Ok(()) = rogtui::daemon::save_state(&app) {
-            rogtui::daemon::spawn_daemon_process();
-        }
+        rogtui::daemon::spawn_daemon_process();
     } else {
         let _ = rogtui::daemon::stop_daemon();
     }

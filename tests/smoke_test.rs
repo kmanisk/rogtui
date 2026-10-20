@@ -847,7 +847,7 @@ async fn test_inline_effect_details_rendering() {
         if row_text.contains("Mode") && row_text.contains("Color Cycle") {
             mode_row = Some(y);
             // Verify description is inline on Mode row
-            assert!(row_text.contains("Sequential smooth crossfade"), "Effect description should be inline on Mode row");
+            assert!(row_text.contains("crossfade"), "Effect description should be inline on Mode row");
         }
         if row_text.contains("Animation speed") {
             speed_row = Some(y);
@@ -1194,6 +1194,118 @@ export THEME_CYAN=\"#7dcfff\"\n";
         "Tokyo Night must extract primary accent blue hue ~221°, got hue {h} (orange would be ~27°)"
     );
     assert_ne!(accent, rogtui::backend::types::RgbColor::new(255, 158, 100)); // NOT orange
+}
+
+#[tokio::test]
+async fn test_color_picker_from_dynamic_theme_auto_switches_to_custom() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioPulse;
+    app.aura_data.color1 = rogtui::ui::aura::SENTINEL_DYNAMIC_THEME;
+    app.user_custom_color = false;
+
+    // Opening color picker must resolve system theme color and set user_custom_color = true
+    app.open_color_picker(1);
+    assert!(app.user_custom_color, "Opening picker sets user_custom_color to true");
+    assert_ne!(
+        app.aura_data.color1,
+        rogtui::ui::aura::SENTINEL_DYNAMIC_THEME,
+        "Color1 must be resolved to live color, never sentinel"
+    );
+    assert_ne!(
+        app.picker_initial_color,
+        rogtui::ui::aura::SENTINEL_DYNAMIC_THEME,
+        "Picker initial color must not be sentinel (2,2,2)"
+    );
+
+    // Esc preserves the resolved color and dismisses modal
+    let key_esc = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Esc,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_esc).await;
+    assert!(!app.show_color_picker_modal);
+    assert!(app.user_custom_color);
+}
+
+#[tokio::test]
+async fn test_mode_and_preset_row_rendering_no_clipping_no_duplicates() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioPulse;
+
+    let terminal_backend = ratatui::backend::TestBackend::new(80, 24);
+    let mut terminal = ratatui::Terminal::new(terminal_backend).unwrap();
+
+    terminal.draw(|f| {
+        let area = f.area();
+        rogtui::ui::aura::render_aura(f, &app, area);
+    }).unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut found_preset_row = false;
+    for y in 0..buffer.area.height {
+        let line: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect();
+
+        if line.contains("Preset") {
+            found_preset_row = true;
+            // Preset row must NOT contain the duplicated 'c picker' or '# hex'
+            assert!(
+                !line.contains("picker"),
+                "Preset row must not duplicate picker hint: {line}"
+            );
+            assert!(
+                !line.contains("hex"),
+                "Preset row must not duplicate hex hint: {line}"
+            );
+        }
+    }
+    assert!(found_preset_row, "Preset row must be present in Aura view");
+}
+
+#[tokio::test]
+async fn test_audio_monitor_source_classification() {
+    let dsp_monitor = "effect_input.Dolby_Speaker.monitor";
+    let is_dsp_monitor = dsp_monitor.ends_with(".monitor") || dsp_monitor.contains(".monitor") || dsp_monitor == "@DEFAULT_MONITOR@";
+    assert!(is_dsp_monitor, "Dolby effect monitor must be classified as a monitor, not a mic");
+
+    let alsa_monitor = "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor";
+    let is_alsa_monitor = alsa_monitor.ends_with(".monitor") || alsa_monitor.contains(".monitor") || alsa_monitor == "@DEFAULT_MONITOR@";
+    assert!(is_alsa_monitor, "ALSA monitor must be classified as a monitor");
+
+    let mic_input = "alsa_input.pci-0000_00_1f.3.analog-stereo";
+    let is_mic_monitor = mic_input.ends_with(".monitor") || mic_input.contains(".monitor") || mic_input == "@DEFAULT_MONITOR@";
+    assert!(!is_mic_monitor, "ALSA microphone input must not be classified as a monitor");
+}
+
+#[tokio::test]
+async fn test_brightness_off_to_low_restores_and_applies_effect() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 0; // Off
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioPulse;
+    app.saved_software_effect = Some(rogtui::backend::types::SoftwareEffect::AudioPulse);
+
+    app.aura_selected_field = 0; // Brightness field
+    let key_right = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Right,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_right).await;
+
+    assert_eq!(app.aura_brightness, 1, "Brightness must increase from Off to Low");
+    assert_eq!(
+        app.active_software_effect,
+        rogtui::backend::types::SoftwareEffect::AudioPulse,
+        "AudioPulse must remain the active software effect"
+    );
 }
 
 

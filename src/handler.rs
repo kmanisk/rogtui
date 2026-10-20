@@ -211,27 +211,40 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                 } else {
                     app.aura_data.color1 = init;
                 }
-                if app.aura_mode == 0 && app.aura_brightness > 0 {
-                    let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
-                } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
-                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                if app.aura_brightness > 0 {
+                    if app.aura_mode == 0 && app.active_software_effect == SoftwareEffect::None {
+                        let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                    } else if app.active_software_effect == SoftwareEffect::None {
+                        let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                    } else {
+                        app.apply_software_effect().await;
+                    }
                 }
                 app.show_color_picker_modal = false;
                 app.set_status("Color edit cancelled", false);
             }
             KeyCode::Enter => {
-                let chosen = app.picker_current_color();
+                let mut chosen = app.picker_current_color();
+                if chosen == crate::ui::aura::SENTINEL_DYNAMIC_THEME {
+                    chosen.b = chosen.b.saturating_add(1);
+                } else if chosen == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE {
+                    chosen.b = chosen.b.saturating_add(1);
+                }
                 if app.picker_target_slot == 2 {
                     app.aura_data.color2 = chosen;
                 } else {
                     app.aura_data.color1 = chosen;
                     app.user_custom_color = true;
                 }
-                if app.aura_mode == 0 && app.aura_brightness > 0 {
-                    let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
-                } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
-                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
-                    let _ = app.backend.set_aura_mode(app.aura_mode).await;
+                if app.aura_brightness > 0 {
+                    if app.aura_mode == 0 && app.active_software_effect == SoftwareEffect::None {
+                        let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                    } else if app.active_software_effect == SoftwareEffect::None {
+                        let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                        let _ = app.backend.set_aura_mode(app.aura_mode).await;
+                    } else {
+                        app.apply_software_effect().await;
+                    }
                 }
                 app.show_color_picker_modal = false;
                 app.set_status(format!("Applied {} to Slot {}", chosen.to_hex(), app.picker_target_slot), false);
@@ -895,6 +908,14 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             if app.aura_brightness == 0 || !crate::ui::aura::supports_custom_color(app) {
                 return;
             }
+            if app.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
+                || !app.user_custom_color
+                || app.aura_data.color1 == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE
+            {
+                let (_, sys_col) = crate::ui::theme::Theme::get_system_theme_color();
+                app.user_custom_color = true;
+                app.aura_data.color1 = sys_col;
+            }
             app.hex_input_buffer = Some(String::new());
             app.set_status("Enter 6 hex digits (e.g. ff4080) and press Enter:", false);
         }
@@ -970,6 +991,7 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                     app.apply_software_effect().await;
                 }
             }
+            let _ = crate::daemon::save_state(app);
             let b_names = ["Off", "Low", "Med", "High"];
             app.set_status(format!("Aura Brightness: {}", b_names[b as usize]), false);
         }
@@ -1216,6 +1238,8 @@ async fn adjust_picker_slider<B: Backend>(app: &mut AppState<B>, dir: i32) {
         let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
     } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
         let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+    } else if app.aura_brightness > 0 {
+        app.apply_software_effect().await;
     }
 }
 
