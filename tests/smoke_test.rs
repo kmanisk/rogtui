@@ -1383,7 +1383,7 @@ async fn test_audio_wave_frequency_multi_band_cascade() {
         let _ = app.compute_audio_wave_color();
     }
     assert!(
-        app.audio_wave_hue <= 65.0,
+        app.audio_wave_hue <= 65.0 || app.audio_wave_hue >= 340.0,
         "Heavy bass must shift Audio Wave hue into warm scarlet/amber, got hue {}",
         app.audio_wave_hue
     );
@@ -1391,6 +1391,7 @@ async fn test_audio_wave_frequency_multi_band_cascade() {
     // 2. Treble dominance should steer hue toward electric violet / purple (240° - 310°)
     app.audio_service.set_audio_level(80);
     app.audio_service.set_bass_level(10);
+    app.audio_service.set_mid_level(10);
     app.audio_service.set_treble_level(95);
     app.audio_service.set_bass_punch(0);
 
@@ -1400,6 +1401,22 @@ async fn test_audio_wave_frequency_multi_band_cascade() {
     assert!(
         app.audio_wave_hue >= 180.0,
         "High treble points must shift Audio Wave hue into electric violet/cyan, got hue {}",
+        app.audio_wave_hue
+    );
+
+    // 3. Vocal / mid dominance should steer hue toward emerald / cyan / aquamarine (120° - 200°)
+    app.audio_service.set_audio_level(80);
+    app.audio_service.set_bass_level(10);
+    app.audio_service.set_mid_level(95);
+    app.audio_service.set_treble_level(10);
+    app.audio_service.set_bass_punch(0);
+
+    for _ in 0..15 {
+        let _ = app.compute_audio_wave_color();
+    }
+    assert!(
+        app.audio_wave_hue >= 120.0 && app.audio_wave_hue <= 200.0,
+        "Vocal / mid dominance must shift Audio Wave hue into emerald/aquamarine/cyan, got hue {}",
         app.audio_wave_hue
     );
 }
@@ -1423,6 +1440,58 @@ async fn test_rainbow_wave_and_color_cycle_smoothness() {
     assert!(col.r > 200, "Red channel must remain high during red-orange transition");
     assert!(col.g > 30, "Green channel must be active for orange crossfade");
 }
+
+#[tokio::test]
+async fn test_audio_multi_band_beats_vocals_high_and_low() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioPulse;
+
+    // Initialize monitor
+    let _ = app.compute_audio_pulse_color();
+
+    // 1. Vocal-heavy section (singing / speech with low bass and low treble)
+    app.aura_data.color1 = rogtui::backend::types::RgbColor::new(0, 200, 255); // Cyan
+    app.user_custom_color = true;
+    app.audio_service.set_audio_level(70);
+    app.audio_service.set_bass_level(15);
+    app.audio_service.set_mid_level(90);
+    app.audio_service.set_treble_level(15);
+    app.audio_service.set_bass_punch(0);
+
+    let vocal_col = app.compute_audio_pulse_color();
+    assert_eq!(app.audio_mid, 90);
+    assert_eq!(app.audio_bass, 15);
+    // Vocals must maintain luminous output without dipping to black during bass lulls
+    assert!(vocal_col.b > 100, "Vocals must keep lighting brightly illuminated (got b={})", vocal_col.b);
+
+    // 2. High treble transient (cymbals / hi-hats / shimmer)
+    app.audio_service.set_audio_level(70);
+    app.audio_service.set_bass_level(10);
+    app.audio_service.set_mid_level(20);
+    app.audio_service.set_treble_level(95);
+    app.audio_service.set_bass_punch(0);
+
+    let treble_col = app.compute_audio_pulse_color();
+    let (_, treble_s, _) = treble_col.to_hsv();
+    assert!(treble_s >= 90.0, "High treble transients must intensify color saturation (got s={})", treble_s);
+
+    // 3. Silence at Low brightness (1) must turn completely off
+    app.aura_brightness = 1;
+    app.audio_service.set_audio_level(0);
+    app.audio_service.set_bass_level(0);
+    app.audio_service.set_mid_level(0);
+    app.audio_service.set_treble_level(0);
+    app.audio_service.set_bass_punch(0);
+
+    let silent_col = app.compute_audio_pulse_color();
+    assert_eq!(silent_col.r, 0);
+    assert_eq!(silent_col.g, 0);
+    assert_eq!(silent_col.b, 0);
+}
+
 
 
 
