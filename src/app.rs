@@ -81,6 +81,9 @@ pub struct AudioCaptureService {
     raw_mic_level: Arc<AtomicU8>,
     voice_sensitivity: Arc<AtomicU8>,
     audio_level: Arc<AtomicU8>,
+    bass_level: Arc<AtomicU8>,
+    treble_level: Arc<AtomicU8>,
+    bass_punch: Arc<AtomicU8>,
     thread_handle: Option<JoinHandle<()>>,
     current_source: Option<String>,
 }
@@ -99,6 +102,9 @@ impl AudioCaptureService {
             raw_mic_level: Arc::new(AtomicU8::new(0)),
             voice_sensitivity: Arc::new(AtomicU8::new(75)),
             audio_level: Arc::new(AtomicU8::new(0)),
+            bass_level: Arc::new(AtomicU8::new(0)),
+            treble_level: Arc::new(AtomicU8::new(0)),
+            bass_punch: Arc::new(AtomicU8::new(0)),
             thread_handle: None,
             current_source: None,
         }
@@ -119,6 +125,9 @@ impl AudioCaptureService {
         } else {
             self.audio_level.clone()
         };
+        let bass_atomic = self.bass_level.clone();
+        let treble_atomic = self.treble_level.clone();
+        let punch_atomic = self.bass_punch.clone();
         let voice_sens_atomic = self.voice_sensitivity.clone();
         let raw_mic_atomic = self.raw_mic_level.clone();
         let src_str = source.to_string();
@@ -151,9 +160,14 @@ impl AudioCaptureService {
             };
 
             use std::io::Read;
-            let mut buf = [0u8; 400]; // 200 samples (25ms)
+            let mut buf = [0u8; 400]; // 200 samples (25ms) at 8000Hz 16-bit mono
             let mut rolling_peak: f32 = if is_mic { 2500.0 } else { 800.0 };
             let mut decay_brightness: f32 = 0.0;
+            let mut decay_bass: f32 = 0.0;
+            let mut decay_treble: f32 = 0.0;
+            let mut decay_punch: f32 = 0.0;
+            let mut bass_filter_state: f32 = 0.0;
+            let mut rolling_bass_avg: f32 = 300.0;
 
             while running_clone.load(Ordering::Relaxed) {
                 let mut read_bytes = 0;
@@ -170,59 +184,101 @@ impl AudioCaptureService {
                 }
 
                 let num_samples = read_bytes / 2;
-                let mut max_amp: u32 = 0;
+                let mut max_amp: f32 = 0.0;
+                let mut max_bass_amp: f32 = 0.0;
+                let mut max_treble_amp: f32 = 0.0;
+
                 for i in 0..num_samples {
-                    let sample = i16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]]);
-                    let amp = sample.unsigned_abs() as u32;
+                    let sample = i16::from_le_bytes([buf[i * 2], buf[i * 2 + 1]]) as f32;
+                    let amp = sample.abs();
                     if amp > max_amp {
                         max_amp = amp;
                     }
+
+                    // Low-pass filter for bass: cutoff ~180 Hz at 8000 Hz (alpha ≈ 0.1414)
+                    bass_filter_state += 0.1414 * (sample - bass_filter_state);
+                    let bass_amp = bass_filter_state.abs();
+                    if bass_amp > max_bass_amp {
+                        max_bass_amp = bass_amp;
+                    }
+
+                    // High-pass residual for treble / transients (snares, hi-hats, vocal crests)
+                    let treble_amp = (sample - bass_filter_state).abs();
+                    if treble_amp > max_treble_amp {
+                        max_treble_amp = treble_amp;
+                    }
                 }
 
-                let current_f = max_amp as f32;
-                let raw_ratio = if is_mic {
+                let current_f = max_amp;
+                if is_mic {
                     let raw_meter = ((current_f / 3200.0) * 100.0).clamp(0.0, 100.0) as u8;
                     raw_mic_atomic.store(raw_meter, Ordering::Relaxed);
 
                     let sens = voice_sens_atomic.load(Ordering::Relaxed).clamp(10, 100) as f32 / 100.0;
-                    // Dynamic speech gate based on sensitivity:
-                    // 100% -> threshold 100 (whispers)
-                    // 75%  -> threshold 262 (conversational speech)
-                    // 50%  -> threshold 425 (moderate speech)
-                    // 10%  -> threshold 685 (loud speech)
                     let speech_gate = 100.0 + (1.0 - sens) * 650.0;
-                    if current_f <= speech_gate {
+                    let raw_ratio = if current_f <= speech_gate {
                         0.0
                     } else {
                         let ceiling = (rolling_peak * 0.95).max(current_f).max(speech_gate + 600.0);
                         rolling_peak = ceiling;
                         ((current_f - speech_gate) / (ceiling - speech_gate)).clamp(0.0, 1.0)
-                    }
+                    };
+                    decay_brightness = (decay_brightness * 0.70).max(raw_ratio);
+                    if decay_brightness < 0.02 { decay_brightness = 0.0; }
+                    let level = (decay_brightness.powf(1.3) * 100.0).round().clamp(0.0, 100.0) as u8;
+                    output_atomic.store(level, Ordering::Relaxed);
                 } else {
+                    // Monitor audio: compute overall level, bass level, treble level, and bass drop punch
                     let ceiling = (rolling_peak * 0.95).max(current_f).max(750.0);
                     rolling_peak = ceiling;
                     let noise_floor = 40.0;
-                    if current_f <= noise_floor {
+                    let raw_ratio = if current_f <= noise_floor {
                         0.0
                     } else {
                         ((current_f - noise_floor) / (ceiling - noise_floor)).clamp(0.0, 1.0)
-                    }
-                };
+                    };
+                    decay_brightness = (decay_brightness * 0.65).max(raw_ratio);
+                    if decay_brightness < 0.02 { decay_brightness = 0.0; }
+                    let level = (decay_brightness.powf(1.15) * 100.0).round().clamp(0.0, 100.0) as u8;
+                    output_atomic.store(level, Ordering::Relaxed);
 
-                let decay_rate = if is_mic { 0.70 } else { 0.65 };
-                decay_brightness = (decay_brightness * decay_rate).max(raw_ratio);
-                if decay_brightness < 0.02 {
-                    decay_brightness = 0.0;
+                    // Bass energy & bass drop detection
+                    let bass_ceiling = (rolling_peak * 0.85).max(max_bass_amp).max(500.0);
+                    let raw_bass = if max_bass_amp <= 35.0 {
+                        0.0
+                    } else {
+                        ((max_bass_amp - 35.0) / (bass_ceiling - 35.0)).clamp(0.0, 1.0)
+                    };
+                    decay_bass = (decay_bass * 0.60).max(raw_bass);
+                    if decay_bass < 0.02 { decay_bass = 0.0; }
+                    let bass_level = (decay_bass.powf(1.10) * 100.0).round().clamp(0.0, 100.0) as u8;
+                    bass_atomic.store(bass_level, Ordering::Relaxed);
+
+                    // Beat drop / kick drum transient spike:
+                    let bass_ratio = if rolling_bass_avg > 50.0 { max_bass_amp / rolling_bass_avg } else { 1.0 };
+                    rolling_bass_avg = rolling_bass_avg * 0.90 + max_bass_amp * 0.10;
+
+                    let raw_punch = if bass_ratio > 1.25 && max_bass_amp > 200.0 {
+                        (((bass_ratio - 1.20) / 1.4) * 100.0).clamp(0.0, 100.0)
+                    } else {
+                        0.0
+                    };
+                    decay_punch = (decay_punch * 0.52).max(raw_punch);
+                    if decay_punch < 2.0 { decay_punch = 0.0; }
+                    punch_atomic.store(decay_punch.round().clamp(0.0, 100.0) as u8, Ordering::Relaxed);
+
+                    // Treble energy (high frequencies / hi-hats / crests)
+                    let treble_ceiling = (rolling_peak * 0.75).max(max_treble_amp).max(450.0);
+                    let raw_treble = if max_treble_amp <= 30.0 {
+                        0.0
+                    } else {
+                        ((max_treble_amp - 30.0) / (treble_ceiling - 30.0)).clamp(0.0, 1.0)
+                    };
+                    decay_treble = (decay_treble * 0.55).max(raw_treble);
+                    if decay_treble < 0.02 { decay_treble = 0.0; }
+                    let treble_level = (decay_treble.powf(1.20) * 100.0).round().clamp(0.0, 100.0) as u8;
+                    treble_atomic.store(treble_level, Ordering::Relaxed);
                 }
-
-                let curved = if is_mic {
-                    decay_brightness.powf(1.3)
-                } else {
-                    decay_brightness.powf(1.15)
-                };
-                let level = (curved * 100.0).round().clamp(0.0, 100.0) as u8;
-
-                output_atomic.store(level, Ordering::Relaxed);
             }
 
             let _ = child.kill();
@@ -296,6 +352,9 @@ impl AudioCaptureService {
         self.mic_level.store(0, Ordering::Relaxed);
         self.raw_mic_level.store(0, Ordering::Relaxed);
         self.audio_level.store(0, Ordering::Relaxed);
+        self.bass_level.store(0, Ordering::Relaxed);
+        self.treble_level.store(0, Ordering::Relaxed);
+        self.bass_punch.store(0, Ordering::Relaxed);
     }
 
     pub fn set_voice_sensitivity(&self, val: u8) {
@@ -316,6 +375,30 @@ impl AudioCaptureService {
 
     pub fn set_audio_level(&self, val: u8) {
         self.audio_level.store(val, Ordering::Relaxed);
+    }
+
+    pub fn get_bass_level(&self) -> u8 {
+        self.bass_level.load(Ordering::Relaxed)
+    }
+
+    pub fn set_bass_level(&self, val: u8) {
+        self.bass_level.store(val, Ordering::Relaxed);
+    }
+
+    pub fn get_treble_level(&self) -> u8 {
+        self.treble_level.load(Ordering::Relaxed)
+    }
+
+    pub fn set_treble_level(&self, val: u8) {
+        self.treble_level.store(val, Ordering::Relaxed);
+    }
+
+    pub fn get_bass_punch(&self) -> u8 {
+        self.bass_punch.load(Ordering::Relaxed)
+    }
+
+    pub fn set_bass_punch(&self, val: u8) {
+        self.bass_punch.store(val, Ordering::Relaxed);
     }
 
     pub fn is_monitoring(&self) -> bool {
@@ -1121,12 +1204,12 @@ impl<B: Backend> AppState<B> {
         }
     }
 
-    /// Compute the next hue and color for Rainbow Wave.
+    /// Compute the next hue and color for Rainbow Wave with silky smooth traversal.
     pub fn compute_rainbow_wave_color(&mut self) -> RgbColor {
         let speed_deg = match self.aura_data.speed.to_ascii_lowercase().as_str() {
-            "low" => 15.0,
-            "high" => 60.0,
-            _ => 30.0,
+            "low" => 4.0,
+            "high" => 16.0,
+            _ => 8.0,
         };
         let dir_mult = if self.aura_data.direction.eq_ignore_ascii_case("left") {
             -1.0
@@ -1137,7 +1220,7 @@ impl<B: Backend> AppState<B> {
         RgbColor::from_hsv(self.rainbow_wave_hue, 100.0, 100.0)
     }
 
-    /// Compute the next step for Color Cycle (7 primary colors) with smooth crossfade and speed control.
+    /// Compute the next step for Color Cycle (7 primary colors) with smooth sinusoidal crossfade.
     pub fn compute_color_cycle_color(&mut self) -> RgbColor {
         const CYCLE_COLORS: [RgbColor; 7] = [
             RgbColor::new(255, 0, 0),     // Red
@@ -1151,8 +1234,8 @@ impl<B: Backend> AppState<B> {
 
         let step = match self.aura_data.speed.to_ascii_lowercase().as_str() {
             "low" => 0.02,
-            "high" => 0.10,
-            _ => 0.05,
+            "high" => 0.08,
+            _ => 0.04,
         };
 
         if self.aura_data.direction.eq_ignore_ascii_case("left") {
@@ -1168,10 +1251,13 @@ impl<B: Backend> AppState<B> {
         let c1 = CYCLE_COLORS[idx1];
         let c2 = CYCLE_COLORS[idx2];
 
+        // Smooth cosine ease to avoid luminosity dip between color keyframes
+        let smooth_t = (1.0 - (frac * std::f32::consts::PI).cos()) * 0.5;
+
         RgbColor::new(
-            (c1.r as f32 * (1.0 - frac) + c2.r as f32 * frac).round() as u8,
-            (c1.g as f32 * (1.0 - frac) + c2.g as f32 * frac).round() as u8,
-            (c1.b as f32 * (1.0 - frac) + c2.b as f32 * frac).round() as u8,
+            (c1.r as f32 * (1.0 - smooth_t) + c2.r as f32 * smooth_t).round() as u8,
+            (c1.g as f32 * (1.0 - smooth_t) + c2.g as f32 * smooth_t).round() as u8,
+            (c1.b as f32 * (1.0 - smooth_t) + c2.b as f32 * smooth_t).round() as u8,
         )
     }
 
@@ -1304,70 +1390,120 @@ impl<B: Backend> AppState<B> {
             self.audio_service.start(&mon_source);
         }
         let level = self.audio_service.get_audio_level();
+        let bass = self.audio_service.get_bass_level();
+        let treble = self.audio_service.get_treble_level();
+        let punch = self.audio_service.get_bass_punch();
         self.audio_level = level;
 
-        let c = if self.aura_data.color1 == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE {
-            let hue_step = 1.2 + (level as f32) * 0.45;
-            self.spectrum_pulse_hue = (self.spectrum_pulse_hue + hue_step) % 360.0;
-            RgbColor::from_hsv(self.spectrum_pulse_hue, 100.0, 100.0)
-        } else if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
-            || !self.user_custom_color
-            || (self.aura_data.color1.r == 0
-                && self.aura_data.color1.g == 0
-                && self.aura_data.color1.b == 0)
-        {
-            crate::ui::theme::Theme::read_system_theme().1
-        } else {
-            self.aura_data.color1
-        };
+        let level_f = level as f32 / 100.0;
+        let bass_f = bass as f32 / 100.0;
+        let treble_f = treble as f32 / 100.0;
+        let punch_f = punch as f32 / 100.0;
+
+        let combined_energy = (level_f * 0.40 + bass_f * 0.45 + treble_f * 0.15 + punch_f * 0.40).clamp(0.0, 1.0);
 
         let (min_mult, max_mult) = match self.aura_brightness {
-            1 => (0.00, 0.40),
-            2 => (0.05, 0.70),
-            _ => (0.00, 1.00), // Max/High brightness (3): uses all levels from 0.0 to 1.0
+            1 => (0.00, 0.45),
+            2 => (0.04, 0.75),
+            _ => (0.00, 1.00), // Max/High brightness (3)
         };
 
-        let ratio = (level as f32 / 100.0).clamp(0.0, 1.0);
-        let mult = if level == 0 {
+        let mult = if level == 0 && punch == 0 {
             min_mult
         } else {
-            min_mult + (max_mult - min_mult) * ratio
+            min_mult + (max_mult - min_mult) * combined_energy.powf(0.85)
         };
 
-        RgbColor::new(
-            (c.r as f32 * mult).clamp(0.0, 255.0) as u8,
-            (c.g as f32 * mult).clamp(0.0, 255.0) as u8,
-            (c.b as f32 * mult).clamp(0.0, 255.0) as u8,
-        )
+        if self.aura_data.color1 == crate::ui::aura::SENTINEL_SPECTRUM_CYCLE {
+            // Explosive color advancement on drops and high energy hits:
+            let hue_step = 1.0 + (level_f * 1.5) + (bass_f * 2.8) + (punch_f * 8.0);
+            self.spectrum_pulse_hue = (self.spectrum_pulse_hue + hue_step) % 360.0;
+
+            // Treble sparkle + bass saturation
+            let sat = (88.0 + bass_f * 12.0).clamp(70.0, 100.0);
+            let val = (mult * 100.0).clamp(0.0, 100.0);
+            RgbColor::from_hsv(self.spectrum_pulse_hue, sat, val)
+        } else {
+            let base_col = if self.aura_data.color1 == crate::ui::aura::SENTINEL_DYNAMIC_THEME
+                || !self.user_custom_color
+                || (self.aura_data.color1.r == 0
+                    && self.aura_data.color1.g == 0
+                    && self.aura_data.color1.b == 0)
+            {
+                crate::ui::theme::Theme::read_system_theme().1
+            } else {
+                self.aura_data.color1
+            };
+
+            let (base_h, base_s, base_v) = base_col.to_hsv();
+
+            // Dynamic harmonic energy flare on bass drops:
+            // Under heavy bass drops, flare the hue toward an energetic warm/vibrant harmonic (up to +20°)
+            let dynamic_hue = if punch > 12 || bass > 55 {
+                (base_h + punch_f * 20.0 + bass_f * 6.0) % 360.0
+            } else {
+                base_h
+            };
+
+            // High points (treble) & bass punch intensify saturation:
+            let dynamic_sat = if punch > 15 || treble > 40 {
+                (base_s + (punch_f * 20.0) + (treble_f * 10.0)).clamp(20.0, 100.0)
+            } else {
+                base_s
+            };
+
+            let dynamic_val = (base_v * mult).clamp(0.0, 100.0);
+            RgbColor::from_hsv(dynamic_hue, dynamic_sat, dynamic_val)
+        }
     }
 
-    /// Audio Wave: Dynamic audio spectrum EQ via non-blocking worker.
-    /// Smoothly transitions color across the spectrum based on playback intensity.
+    /// Audio Wave: Dynamic multi-harmonic audio spectrum EQ via non-blocking worker.
+    /// Analyzes low bass kicks, vocal/synth mids, and high treble transients to cascade colors musically.
     pub fn compute_audio_wave_color(&mut self) -> RgbColor {
         if !self.audio_service.is_monitoring() {
             let mon_source = AudioCaptureService::find_preferred_monitor_source();
             self.audio_service.start(&mon_source);
         }
         let level = self.audio_service.get_audio_level();
+        let bass = self.audio_service.get_bass_level();
+        let treble = self.audio_service.get_treble_level();
+        let punch = self.audio_service.get_bass_punch();
         self.audio_level = level;
 
         let raw_level = level as f32;
-        // Smooth audio level tracking (attack faster than decay for punchy response without jitter)
-        let alpha_level = if raw_level > self.audio_level_smooth { 0.28 } else { 0.10 };
+        let alpha_level = if raw_level > self.audio_level_smooth { 0.35 } else { 0.12 };
         self.audio_level_smooth = self.audio_level_smooth * (1.0 - alpha_level) + raw_level * alpha_level;
 
-        // Continuous hue mapping across spectrum:
-        // 0% -> 240° (Deep blue), 30% -> 180° (Teal/Cyan), 60% -> 110° (Green/Lime), 85% -> 45° (Amber), 100% -> 0° (Red)
-        let target_hue = (240.0 - (self.audio_level_smooth / 100.0) * 240.0).clamp(0.0, 240.0);
+        // Dynamic multi-band frequency mapping:
+        // Bass dominant -> deep crimson/red (0°) to fiery amber (35°)
+        // Mids dominant -> lush green (120°) to luminous cyan (180°)
+        // Treble dominant -> electric violet/purple (270°) to magenta (310°)
+        let bass_w = bass as f32 / 100.0;
+        let treble_w = treble as f32 / 100.0;
+        let level_w = self.audio_level_smooth / 100.0;
 
-        // Smooth gradual hue transition so colors change gracefully and musically, not rapidly
-        let alpha_hue = 0.12;
+        let target_hue = if punch > 25 {
+            // Instant bass drop surge: shifts into intense scarlet/ember
+            10.0 + (1.0 - bass_w) * 25.0
+        } else if bass_w > treble_w + 0.15 {
+            // Heavy bass: crimson to amber (0° - 40°)
+            (35.0 - bass_w * 35.0).clamp(0.0, 45.0)
+        } else if treble_w > bass_w + 0.15 {
+            // Treble / high points: electric violet (260° - 300°)
+            (260.0 + treble_w * 40.0).clamp(240.0, 310.0)
+        } else {
+            // Balanced / mids: sweeping between cyan (180°) and deep blue (240°) down to lime (100°)
+            (240.0 - level_w * 160.0).clamp(80.0, 240.0)
+        };
+
+        // Fast attack on drops, smooth musical glide on transitions
+        let alpha_hue = if punch > 20 { 0.35 } else { 0.15 };
         self.audio_wave_hue = self.audio_wave_hue * (1.0 - alpha_hue) + target_hue * alpha_hue;
 
         let val = if self.aura_brightness == 1 && level == 0 {
             0.0
         } else {
-            (25.0 + 75.0 * (self.audio_level_smooth / 100.0)).clamp(15.0, 100.0)
+            (25.0 + 75.0 * level_w + (punch as f32 * 0.25)).clamp(15.0, 100.0)
         };
 
         RgbColor::from_hsv(self.audio_wave_hue, 100.0, val)
@@ -1400,6 +1536,8 @@ impl<B: Backend> AppState<B> {
 
         let base_col = self.compute_ambient_color();
         let level = self.audio_service.get_audio_level();
+        let bass = self.audio_service.get_bass_level();
+        let punch = self.audio_service.get_bass_punch();
         self.audio_level = level;
 
         let (min_mult, max_mult) = match self.aura_brightness {
@@ -1408,15 +1546,15 @@ impl<B: Backend> AppState<B> {
             _ => (0.00, 1.00),
         };
 
-        let ratio = (level as f32 / 100.0).clamp(0.0, 1.0);
-        let mult = if level == 0 {
+        let energy = ((level as f32 / 100.0) * 0.50 + (bass as f32 / 100.0) * 0.35 + (punch as f32 / 100.0) * 0.35).clamp(0.0, 1.0);
+        let mult = if level == 0 && punch == 0 {
             min_mult
         } else {
-            min_mult + (max_mult - min_mult) * ratio
+            min_mult + (max_mult - min_mult) * energy.powf(0.85)
         };
 
         let (h, s, _) = base_col.to_hsv();
-        let dyn_s = (s + ratio * 20.0).clamp(10.0, 100.0);
+        let dyn_s = (s + energy * 25.0).clamp(10.0, 100.0);
         let dyn_v = (mult * 100.0).clamp(0.0, 100.0);
         RgbColor::from_hsv(h, dyn_s, dyn_v)
     }

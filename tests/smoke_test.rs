@@ -1308,6 +1308,123 @@ async fn test_brightness_off_to_low_restores_and_applies_effect() {
     );
 }
 
+#[tokio::test]
+async fn test_audio_pulse_bass_drop_and_high_point_dynamics() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioPulse;
+
+    // 1. Spectrum Cycle preset: test bass drop acceleration
+    app.aura_data.color1 = rogtui::ui::aura::SENTINEL_SPECTRUM_CYCLE;
+    app.spectrum_pulse_hue = 100.0;
+    app.audio_service.set_audio_level(30);
+    app.audio_service.set_bass_level(10);
+    app.audio_service.set_bass_punch(0);
+
+    let _ = app.compute_audio_pulse_color();
+    let quiet_step = app.spectrum_pulse_hue - 100.0;
+
+    // Now trigger a heavy bass drop (punch = 80, bass = 90)
+    app.spectrum_pulse_hue = 100.0;
+    app.audio_service.set_audio_level(85);
+    app.audio_service.set_bass_level(90);
+    app.audio_service.set_bass_punch(80);
+    let drop_color = app.compute_audio_pulse_color();
+    let drop_step = app.spectrum_pulse_hue - 100.0;
+
+    assert!(
+        drop_step > quiet_step * 2.0,
+        "Bass drop must dynamically accelerate spectrum traversal (drop_step={drop_step}, quiet_step={quiet_step})"
+    );
+    assert!(drop_color.r > 0 || drop_color.g > 0 || drop_color.b > 0);
+
+    // 2. Static preset (Cyberpunk #00FFAA): test harmonic energy flare on bass drop
+    app.aura_data.color1 = rogtui::backend::types::RgbColor::new(0, 255, 170); // Cyberpunk
+    app.user_custom_color = true;
+
+    // Normal audio:
+    app.audio_service.set_audio_level(40);
+    app.audio_service.set_bass_level(30);
+    app.audio_service.set_bass_punch(0);
+    let normal_col = app.compute_audio_pulse_color();
+
+    // Bass drop:
+    app.audio_service.set_audio_level(90);
+    app.audio_service.set_bass_level(85);
+    app.audio_service.set_bass_punch(75);
+    let punch_col = app.compute_audio_pulse_color();
+
+    let (norm_h, _, _) = normal_col.to_hsv();
+    let (punch_h, _, _) = punch_col.to_hsv();
+    assert_ne!(norm_h, punch_h, "Bass drop must trigger dynamic harmonic energy shift on preset hue");
+    assert!(punch_col.g > normal_col.g || punch_col.b > normal_col.b, "Bass drop must dramatically punch brightness");
+}
+
+#[tokio::test]
+async fn test_audio_wave_frequency_multi_band_cascade() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioWave;
+
+    // Initialize service
+    let _ = app.compute_audio_wave_color();
+
+    // 1. Heavy bass dominance should steer hue toward crimson / red / amber (0° - 40°)
+    app.audio_service.set_audio_level(80);
+    app.audio_service.set_bass_level(95);
+    app.audio_service.set_treble_level(15);
+    app.audio_service.set_bass_punch(0);
+
+    for _ in 0..15 {
+        let _ = app.compute_audio_wave_color();
+    }
+    assert!(
+        app.audio_wave_hue <= 65.0,
+        "Heavy bass must shift Audio Wave hue into warm scarlet/amber, got hue {}",
+        app.audio_wave_hue
+    );
+
+    // 2. Treble dominance should steer hue toward electric violet / purple (240° - 310°)
+    app.audio_service.set_audio_level(80);
+    app.audio_service.set_bass_level(10);
+    app.audio_service.set_treble_level(95);
+    app.audio_service.set_bass_punch(0);
+
+    for _ in 0..15 {
+        let _ = app.compute_audio_wave_color();
+    }
+    assert!(
+        app.audio_wave_hue >= 180.0,
+        "High treble points must shift Audio Wave hue into electric violet/cyan, got hue {}",
+        app.audio_wave_hue
+    );
+}
+
+#[tokio::test]
+async fn test_rainbow_wave_and_color_cycle_smoothness() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = rogtui::app::ActiveTab::Aura;
+    app.aura_brightness = 3;
+
+    // Rainbow wave step at Med speed should be smooth 8° per tick, not coarse 30°
+    app.aura_data.speed = "Med".to_string();
+    app.rainbow_wave_hue = 0.0;
+    let _ = app.compute_rainbow_wave_color();
+    assert_eq!(app.rainbow_wave_hue, 8.0, "Rainbow wave med speed should step 8 degrees for fluid sweep");
+
+    // Color cycle step should crossfade continuously with cosine easing
+    app.color_cycle_progress = 0.5; // Halfway between red and orange
+    let col = app.compute_color_cycle_color();
+    assert!(col.r > 200, "Red channel must remain high during red-orange transition");
+    assert!(col.g > 30, "Green channel must be active for orange crossfade");
+}
+
+
 
 
 
