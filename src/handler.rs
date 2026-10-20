@@ -164,6 +164,8 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                         if app.aura_brightness > 0 {
                             if app.aura_mode == 0 && app.active_software_effect == SoftwareEffect::None {
                                 let _ = app.backend.write_volatile_rgb(col).await;
+                            } else if app.active_software_effect == SoftwareEffect::None {
+                                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
                             } else {
                                 app.apply_software_effect().await;
                             }
@@ -208,9 +210,11 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                     app.aura_data.color2 = init;
                 } else {
                     app.aura_data.color1 = init;
-                    if app.aura_mode == 0 {
-                        let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
-                    }
+                }
+                if app.aura_mode == 0 && app.aura_brightness > 0 {
+                    let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
                 }
                 app.show_color_picker_modal = false;
                 app.set_status("Color edit cancelled", false);
@@ -224,6 +228,8 @@ pub async fn handle_key_event<B: Backend>(app: &mut AppState<B>, key: KeyEvent) 
                 }
                 if app.aura_mode == 0 && app.aura_brightness > 0 {
                     let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+                } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
                 }
                 app.show_color_picker_modal = false;
                 app.set_status(format!("Applied {} to Slot {}", chosen.to_hex(), app.picker_target_slot), false);
@@ -1024,6 +1030,8 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             app.user_custom_color = next_pos != 0;
             if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+            } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
             }
             let preset_name = presets[next_pos].0;
             app.set_status(format!("Preset applied: {} ({})", preset_name, app.aura_data.color1.to_hex()), false);
@@ -1034,6 +1042,8 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             app.user_custom_color = true;
             if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+            } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
             }
         }
         4 => {
@@ -1042,6 +1052,8 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             app.user_custom_color = true;
             if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+            } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
             }
         }
         5 => {
@@ -1050,6 +1062,8 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             app.user_custom_color = true;
             if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+            } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
             }
         }
         6 => {
@@ -1058,6 +1072,11 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             let count = presets.len() as i32;
             let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
             app.aura_data.color2 = presets[next_pos].1;
+            if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            }
+            let preset_name = presets[next_pos].0;
+            app.set_status(format!("Secondary Preset applied: {} ({})", preset_name, app.aura_data.color2.to_hex()), false);
         }
         7 => {
             if app.active_software_effect == SoftwareEffect::VoicePulse {
@@ -1068,10 +1087,13 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
                 app.audio_service.set_voice_sensitivity(next);
                 app.set_status(format!("Mic sensitivity set to {}%", next), false);
             } else {
-                let speeds = ["low", "med", "high"];
+                let speeds = ["Low", "Med", "High"];
                 let idx = speeds.iter().position(|s| s.eq_ignore_ascii_case(&app.aura_data.speed)).unwrap_or(1);
                 let n = ((idx as i32 + dir + 3) % 3) as usize;
                 app.aura_data.speed = speeds[n].to_string();
+                if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                    let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+                }
             }
         }
         8 => {
@@ -1080,6 +1102,9 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             } else {
                 "Right".to_string()
             };
+            if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
+                let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
+            }
         }
         9 => {
             app.aura_power.boot = !app.aura_power.boot;
@@ -1167,9 +1192,15 @@ async fn adjust_picker_slider<B: Backend>(app: &mut AppState<B>, dir: i32) {
         _ => {}
     }
 
-    if app.picker_target_slot == 1 && app.aura_mode == 0 {
-        let cur = app.picker_current_color();
+    let cur = app.picker_current_color();
+    if app.picker_target_slot == 2 {
+        app.aura_data.color2 = cur;
+    } else {
         app.aura_data.color1 = cur;
+    }
+    if app.aura_mode == 0 && app.aura_brightness > 0 && app.picker_target_slot == 1 {
+        let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
+    } else if app.active_software_effect == SoftwareEffect::None && app.aura_brightness > 0 {
         let _ = app.backend.set_aura_mode_data(&app.aura_data).await;
     }
 }

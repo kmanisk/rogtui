@@ -1001,6 +1001,40 @@ async fn test_rgb_tab_hides_rgb_sliders_for_presets() {
     assert!(rogtui::ui::aura::is_aura_field_supported(&app, 2), "Field 2 (Preset) must be supported");
 }
 
+#[tokio::test]
+async fn test_breathe_primary_and_secondary_updates() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.aura_brightness = 3;
+    app.aura_mode = 1;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::None;
+
+    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 2), "Primary color supported in Breathe");
+    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 6), "Secondary color supported in Breathe");
+    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 7), "Speed supported in Breathe");
+
+    // Test secondary color update via handler
+    app.aura_selected_field = 6;
+    let key_right = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Right,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_right).await;
+    let data = app.backend.get_aura_mode_data().await.expect("aura mode data");
+    assert_eq!(data.color2, app.aura_data.color2, "Secondary color must sync to backend");
+
+    // Test primary color update via handler
+    app.aura_selected_field = 2;
+    let key_left = crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Left,
+        crossterm::event::KeyModifiers::empty(),
+    );
+    rogtui::handler::handle_key_event(&mut app, key_left).await;
+    let data2 = app.backend.get_aura_mode_data().await.expect("aura mode data");
+    assert_eq!(data2.color1, app.aura_data.color1, "Primary color must sync to backend");
+}
+
+
 
 
 

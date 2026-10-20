@@ -422,13 +422,22 @@ impl super::Backend for RealBackend {
     }
 
     async fn set_aura_mode_data(&self, data: &AuraModeData) -> anyhow::Result<()> {
+        let speed = match data.speed.to_ascii_lowercase().as_str() {
+            "low" => "Low".to_string(),
+            "high" => "High".to_string(),
+            _ => "Med".to_string(),
+        };
+        let direction = match data.direction.to_ascii_lowercase().as_str() {
+            "left" => "Left".to_string(),
+            _ => "Right".to_string(),
+        };
         let raw: AuraModeRaw = (
             data.mode,
             data.zone,
             (data.color1.r, data.color1.g, data.color1.b),
             (data.color2.r, data.color2.g, data.color2.b),
-            data.speed.clone(),
-            data.direction.clone(),
+            speed,
+            direction,
         );
         self.aura.set_led_mode_data(raw).await?;
         Ok(())
