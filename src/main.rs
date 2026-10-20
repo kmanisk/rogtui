@@ -134,6 +134,7 @@ async fn run_aura_cli(subargs: &[String]) -> anyhow::Result<()> {
     let mut app = AppState::new(backend).await?;
     if let Some(state) = rogtui::daemon::load_state() {
         app.active_software_effect = state.effect;
+        app.aura_mode = state.aura_mode;
         if app.aura_brightness > 0 {
             app.aura_brightness = state.brightness;
         }
@@ -145,6 +146,7 @@ async fn run_aura_cli(subargs: &[String]) -> anyhow::Result<()> {
             && state.color1 != rogtui::ui::aura::SENTINEL_SPECTRUM_CYCLE;
     }
 
+    let is_ui_active = rogtui::daemon::is_ui_running();
     let cmd = if subargs[0] == "aura" || subargs[0] == "rgb" {
         subargs.get(1).map(|s| s.as_str()).unwrap_or("status")
     } else {
@@ -154,29 +156,33 @@ async fn run_aura_cli(subargs: &[String]) -> anyhow::Result<()> {
     match cmd {
         "next-mode" | "next-effect" | "next" => {
             rogtui::handler::cycle_aura_mode(&mut app, 1).await;
-            if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
-                rogtui::daemon::spawn_daemon_process();
-            } else {
-                let _ = rogtui::daemon::stop_daemon();
+            if !is_ui_active {
+                if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
+                    rogtui::daemon::spawn_daemon_process();
+                } else {
+                    let _ = rogtui::daemon::stop_daemon();
+                }
             }
         }
         "prev-mode" | "prev-effect" | "prev" => {
             rogtui::handler::cycle_aura_mode(&mut app, -1).await;
-            if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
-                rogtui::daemon::spawn_daemon_process();
-            } else {
-                let _ = rogtui::daemon::stop_daemon();
+            if !is_ui_active {
+                if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
+                    rogtui::daemon::spawn_daemon_process();
+                } else {
+                    let _ = rogtui::daemon::stop_daemon();
+                }
             }
         }
         "next-preset" => {
             rogtui::handler::cycle_aura_preset(&mut app, 1).await;
-            if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
+            if !is_ui_active && app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
                 rogtui::daemon::spawn_daemon_process();
             }
         }
         "prev-preset" => {
             rogtui::handler::cycle_aura_preset(&mut app, -1).await;
-            if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
+            if !is_ui_active && app.active_software_effect != rogtui::backend::types::SoftwareEffect::None && app.aura_brightness > 0 {
                 rogtui::daemon::spawn_daemon_process();
             }
         }
@@ -184,10 +190,12 @@ async fn run_aura_cli(subargs: &[String]) -> anyhow::Result<()> {
             let next_b = if app.aura_brightness == 0 { 3 } else { 0 };
             let dir = next_b as i32 - app.aura_brightness as i32;
             rogtui::handler::cycle_aura_brightness(&mut app, dir).await;
-            if app.aura_brightness == 0 {
-                let _ = rogtui::daemon::stop_daemon();
-            } else if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None {
-                rogtui::daemon::spawn_daemon_process();
+            if !is_ui_active {
+                if app.aura_brightness == 0 {
+                    let _ = rogtui::daemon::stop_daemon();
+                } else if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None {
+                    rogtui::daemon::spawn_daemon_process();
+                }
             }
         }
         "brightness" => {
@@ -201,10 +209,12 @@ async fn run_aura_cli(subargs: &[String]) -> anyhow::Result<()> {
                 _ => 1,
             };
             rogtui::handler::cycle_aura_brightness(&mut app, dir).await;
-            if app.aura_brightness == 0 {
-                let _ = rogtui::daemon::stop_daemon();
-            } else if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None {
-                rogtui::daemon::spawn_daemon_process();
+            if !is_ui_active {
+                if app.aura_brightness == 0 {
+                    let _ = rogtui::daemon::stop_daemon();
+                } else if app.active_software_effect != rogtui::backend::types::SoftwareEffect::None {
+                    rogtui::daemon::spawn_daemon_process();
+                }
             }
         }
         "status" => {
@@ -323,7 +333,11 @@ async fn run_app<B: backend::Backend>(backend: B, no_color: bool) -> anyhow::Res
     let mut terminal = Terminal::new(term_backend)?;
     terminal.clear()?;
 
+    let _ = rogtui::daemon::register_ui_process();
+
     let res = app_loop(&mut terminal, backend, no_color).await;
+
+    rogtui::daemon::unregister_ui_process();
 
     // Restore terminal safely
     let _ = disable_raw_mode();
@@ -346,6 +360,7 @@ async fn app_loop<B: backend::Backend>(
     // Restore persistent RGB effect and settings from saved state (whether daemon was running or not)
     if let Some(state) = rogtui::daemon::load_state() {
         app.active_software_effect = state.effect;
+        app.aura_mode = state.aura_mode;
         if app.aura_brightness > 0 {
             app.aura_brightness = state.brightness;
         }
@@ -370,6 +385,7 @@ async fn app_loop<B: backend::Backend>(
     let mut last_sensor_time = std::time::Instant::now() - Duration::from_secs(5);
     let mut last_effect_time = std::time::Instant::now() - Duration::from_secs(5);
     let mut last_draw_time = std::time::Instant::now() - Duration::from_secs(5);
+    let mut last_known_state_mtime = rogtui::daemon::get_state_file_mtime();
 
     // Initial draw
     terminal.draw(|f| ui::render_ui(f, &app))?;
@@ -380,6 +396,7 @@ async fn app_loop<B: backend::Backend>(
                 match maybe_event {
                     Some(Ok(Event::Key(key))) => {
                         handler::handle_key_event(&mut app, key).await;
+                        last_known_state_mtime = rogtui::daemon::get_state_file_mtime();
                         terminal.draw(|f| ui::render_ui(f, &app))?;
                         last_draw_time = std::time::Instant::now();
                     }
@@ -395,6 +412,58 @@ async fn app_loop<B: backend::Backend>(
             _ = ticker.tick() => {
                 let now = std::time::Instant::now();
                 let had_expired = app.clear_expired_messages();
+
+                // Hot reload external state if modified by CLI shortcut or external tool
+                let mut did_sync_external_rgb = false;
+                if let Some(mtime) = rogtui::daemon::get_state_file_mtime() {
+                    let is_newer = match last_known_state_mtime {
+                        Some(last) => mtime > last,
+                        None => true,
+                    };
+                    if is_newer {
+                        last_known_state_mtime = Some(mtime);
+                        if let Some(state) = rogtui::daemon::load_state() {
+                            let changed = app.active_software_effect != state.effect
+                                || app.aura_mode != state.aura_mode
+                                || app.aura_brightness != state.brightness
+                                || app.aura_data.speed != state.speed
+                                || app.aura_data.color1 != state.color1
+                                || app.aura_data.color2 != state.color2
+                                || app.voice_sensitivity != state.voice_sensitivity;
+
+                            if changed {
+                                app.active_software_effect = state.effect;
+                                app.aura_mode = state.aura_mode;
+                                app.aura_brightness = state.brightness;
+                                app.aura_data.speed = state.speed;
+                                app.aura_data.color1 = state.color1;
+                                app.aura_data.color2 = state.color2;
+                                app.voice_sensitivity = state.voice_sensitivity;
+                                app.user_custom_color = state.color1 != rogtui::ui::aura::SENTINEL_DYNAMIC_THEME
+                                    && state.color1 != rogtui::ui::aura::SENTINEL_SPECTRUM_CYCLE;
+                                app.last_effect_color = None;
+
+                                if rogtui::daemon::is_daemon_running().is_some() {
+                                    let _ = rogtui::daemon::stop_daemon();
+                                }
+
+                                let mode_name = match app.active_software_effect {
+                                    SoftwareEffect::None => match app.aura_mode {
+                                        1 => "Breathe",
+                                        2 => "Rainbow",
+                                        10 => "Pulse",
+                                        _ => "Static",
+                                    },
+                                    e => e.label(),
+                                };
+                                let preset_name = rogtui::ui::aura::get_active_preset_name(app.aura_data.color1);
+                                app.set_status(format!("RGB Synced: {mode_name} ({preset_name})"), false);
+                                did_sync_external_rgb = true;
+                            }
+                        }
+                    }
+                }
+
                 let is_telemetry_tab = matches!(app.current_tab, ActiveTab::Dashboard | ActiveTab::FanCurves);
                 let needs_sensors = is_telemetry_tab
                     || app.active_software_effect != SoftwareEffect::None
@@ -440,7 +509,8 @@ async fn app_loop<B: backend::Backend>(
 
                 let did_power_transition = app.check_and_apply_power_state_transition().await;
 
-                let should_redraw = did_refresh_sensors
+                let should_redraw = did_sync_external_rgb
+                    || did_refresh_sensors
                     || had_expired
                     || did_reload_theme
                     || did_power_transition

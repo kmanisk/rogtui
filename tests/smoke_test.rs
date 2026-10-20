@@ -952,20 +952,24 @@ fn test_daemon_state_roundtrip() {
 
     let state = RgbDaemonState {
         effect: SoftwareEffect::RainbowWave,
+        aura_mode: 0,
         brightness: 3,
         speed: "high".to_string(),
         color1: RgbColor::new(1, 1, 1),
         color2: RgbColor::new(0, 0, 0),
         voice_sensitivity: 80,
+        updated_at_ms: 123456789,
     };
 
     let toml_str = toml::to_string(&state).expect("serialize");
     let loaded: RgbDaemonState = toml::from_str(&toml_str).expect("deserialize");
 
     assert_eq!(loaded.effect, SoftwareEffect::RainbowWave);
+    assert_eq!(loaded.aura_mode, 0);
     assert_eq!(loaded.brightness, 3);
     assert_eq!(loaded.voice_sensitivity, 80);
     assert_eq!(loaded.color1, RgbColor::new(1, 1, 1));
+    assert_eq!(loaded.updated_at_ms, 123456789);
 }
 
 #[tokio::test]
@@ -1572,6 +1576,69 @@ async fn test_audio_pulse_preserves_last_used_color_and_preset() {
         "Sunset Amber",
         "Re-entering AudioPulse must retain Sunset Amber"
     );
+}
+
+#[tokio::test]
+async fn test_footer_renders_keybinds_and_status_simultaneously() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = ActiveTab::Aura;
+    app.aura_brightness = 2;
+    app.set_status("Aura Mode: Breathe", false);
+
+    let test_backend = TestBackend::new(120, 24);
+    let mut terminal = Terminal::new(test_backend).unwrap();
+    terminal.draw(|f| rogtui::ui::render_ui(f, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+
+    let mut footer_text = String::new();
+    for x in 0..120 {
+        footer_text.push_str(buffer[(x, 23)].symbol());
+    }
+
+    assert!(footer_text.contains("m/M"), "Footer must contain mode shortcut 'm/M': {footer_text}");
+    assert!(footer_text.contains("mode"), "Footer must contain 'mode' label: {footer_text}");
+    assert!(footer_text.contains("p/P"), "Footer must contain preset shortcut 'p/P': {footer_text}");
+    assert!(footer_text.contains("preset"), "Footer must contain 'preset' label: {footer_text}");
+    assert!(footer_text.contains("[ok]"), "Footer must contain status indicator '[ok]': {footer_text}");
+    assert!(footer_text.contains("help"), "Footer must contain 'help': {footer_text}");
+    assert!(footer_text.contains("quit"), "Footer must contain 'quit': {footer_text}");
+}
+
+#[tokio::test]
+async fn test_external_rgb_state_sync_and_persistence() {
+    use rogtui::backend::types::{RgbColor, SoftwareEffect};
+
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.aura_brightness = 3;
+    app.active_software_effect = SoftwareEffect::AudioPulse;
+
+    // Save initial state
+    rogtui::daemon::save_state(&app).expect("save state");
+
+    // Simulate external CLI or shortcut changing the state to RainbowWave with Cyberpunk
+    let mut external_state = rogtui::daemon::load_state().expect("load state");
+    external_state.effect = SoftwareEffect::RainbowWave;
+    external_state.color1 = RgbColor::new(255, 0, 128);
+    external_state.aura_mode = 0;
+
+    let _dir = rogtui::daemon::get_state_dir();
+    let serialized = toml::to_string(&external_state).expect("serialize");
+    std::fs::write(rogtui::daemon::get_state_file_path(), serialized).expect("write state");
+
+    // Reload state as app_loop does
+    let loaded = rogtui::daemon::load_state().expect("load updated");
+    assert_eq!(loaded.effect, SoftwareEffect::RainbowWave);
+    assert_eq!(loaded.color1, RgbColor::new(255, 0, 128));
+
+    app.active_software_effect = loaded.effect;
+    app.aura_data.color1 = loaded.color1;
+    assert_eq!(app.active_software_effect, SoftwareEffect::RainbowWave);
+    assert_eq!(app.aura_data.color1, RgbColor::new(255, 0, 128));
 }
 
 

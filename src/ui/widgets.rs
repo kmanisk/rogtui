@@ -434,130 +434,147 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
     ];
     let right_len = 16;
 
-    let mut left_spans = vec![Span::raw("  ")];
-    let mut left_len = 2;
+    let mut status_spans: Vec<Span> = Vec::new();
+    let mut status_len: usize = 0;
 
     if let Some((msg, is_error, _)) = &app.status_message {
-        let prefix_len = if app.current_tab == ActiveTab::Dashboard {
-            left_spans.push(Span::styled("p", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
-            left_spans.push(Span::styled(" profile  ", Style::default().fg(theme.dim)));
-            11
-        } else {
-            0
-        };
-        let max_msg_len = width.saturating_sub(right_len + 8 + prefix_len);
+        let max_msg_len = width.saturating_sub(right_len + 16);
         let clean_msg = if msg.chars().count() > max_msg_len {
             let truncated: String = msg.chars().take(max_msg_len.saturating_sub(1)).collect();
             format!("{truncated}…")
         } else {
             msg.clone()
         };
-        if *is_error {
-            left_spans.push(Span::styled(
-                format!("[!] {clean_msg}"),
-                Style::default().fg(theme.err).add_modifier(Modifier::BOLD),
-            ));
-            left_len += clean_msg.chars().count() + 4 + prefix_len;
+        let (prefix, style) = if *is_error {
+            ("[!]", Style::default().fg(theme.err).add_modifier(Modifier::BOLD))
         } else {
-            left_spans.push(Span::styled(
-                format!("[ok] {clean_msg}"),
-                Style::default().fg(theme.ok).add_modifier(Modifier::BOLD),
-            ));
-            left_len += clean_msg.chars().count() + 5 + prefix_len;
-        }
+            ("[ok]", Style::default().fg(theme.ok).add_modifier(Modifier::BOLD))
+        };
+        status_spans.push(Span::styled(prefix, style));
+        status_spans.push(Span::raw(" "));
+        status_spans.push(Span::styled(clean_msg.clone(), style));
+        status_len = prefix.len() + 1 + clean_msg.chars().count();
     } else if let Some((clamp_hint, _)) = &app.fan_clamp_hint {
-        let max_hint_len = width.saturating_sub(right_len + 6);
+        let max_hint_len = width.saturating_sub(right_len + 16);
         let clean_hint = if clamp_hint.chars().count() > max_hint_len {
             let truncated: String = clamp_hint.chars().take(max_hint_len.saturating_sub(1)).collect();
             format!("{truncated}…")
         } else {
             clamp_hint.clone()
         };
-        left_spans.push(Span::styled(clean_hint.clone(), Style::default().fg(theme.warn)));
-        left_len += clean_hint.chars().count();
+        status_spans.push(Span::styled(clean_hint.clone(), Style::default().fg(theme.warn)));
+        status_len = clean_hint.chars().count();
+    }
+
+    let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
+        vec![
+            ("j/k", "slider"),
+            ("h/l", "adjust"),
+            ("Enter", "apply"),
+            ("Esc", "cancel"),
+        ]
     } else {
-        let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
-            vec![
-                ("j/k", "slider"),
+        match app.current_tab {
+            ActiveTab::Dashboard => vec![
+                ("p", "cycle profile"),
+                ("Tab", "next tab"),
+            ],
+            ActiveTab::Power => vec![
                 ("h/l", "adjust"),
-                ("Enter", "apply"),
-                ("Esc", "cancel"),
-            ]
-        } else {
-            match app.current_tab {
-                ActiveTab::Dashboard => vec![
-                    ("p", "cycle profile"),
-                    ("Tab", "next tab"),
-                ],
-                ActiveTab::Power => {
-                    match app.power_selected_field {
-                        0..=2 => vec![("h/l", "cycle"), ("Space", "toggle")],
-                        3 => vec![("h/l", "adjust limit")],
-                        4 => vec![("Enter", "full charge")],
-                        _ => vec![],
-                    }
-                }
-                ActiveTab::FanCurves => vec![
-                    ("j/k", "point"),
-                    ("h/l", "adjust"),
-                    ("Space", "temp/speed"),
-                    ("s", "preset"),
-                    ("f", "fan"),
-                    ("w", "apply"),
-                ],
-                ActiveTab::Aura => {
-                    if app.aura_brightness == 0 {
-                        vec![("b", "brightness on"), ("h/l", "adjust")]
-                    } else {
-                        match app.aura_selected_field {
-                            2 => {
-                                if crate::ui::aura::supports_custom_color(app) {
-                                    vec![("p/P", "preset"), ("m/M", "mode"), ("c", "picker"), ("#", "hex")]
-                                } else {
-                                    vec![("m/M", "mode"), ("b/B", "brightness")]
-                                }
-                            }
-                            3..=5 => {
-                                vec![("h/l", "adjust channel"), ("c", "picker"), ("#", "hex"), ("Enter", "confirm")]
-                            }
-                            _ => {
-                                vec![("m/M", "mode"), ("p/P", "preset"), ("b/B", "brightness"), ("c", "picker")]
-                            }
-                        }
-                    }
-                }
-                ActiveTab::System => {
-                    let has_auto_bright = app.sensors.screen_auto_brightness.is_some();
-                    let export_row_idx = if has_auto_bright { 2 } else { 1 };
-                    if app.system_selected_row == export_row_idx {
-                        vec![("Enter", "export report")]
-                    } else {
-                        vec![("Space", "toggle")]
-                    }
+                ("Space", "toggle"),
+                ("Tab", "next tab"),
+            ],
+            ActiveTab::FanCurves => vec![
+                ("j/k", "point"),
+                ("h/l", "adjust"),
+                ("Space", "temp/speed"),
+                ("s", "preset"),
+                ("f", "fan"),
+                ("w", "apply"),
+            ],
+            ActiveTab::Aura => {
+                if app.aura_brightness == 0 {
+                    vec![
+                        ("b", "brightness on"),
+                        ("h/l", "adjust"),
+                        ("Tab", "next tab"),
+                    ]
+                } else {
+                    vec![
+                        ("m/M", "mode"),
+                        ("p/P", "preset"),
+                        ("b/B", "brightness"),
+                        ("c", "picker"),
+                        ("#", "hex"),
+                    ]
                 }
             }
-        };
+            ActiveTab::System => {
+                let has_auto_bright = app.sensors.screen_auto_brightness.is_some();
+                let export_row_idx = if has_auto_bright { 2 } else { 1 };
+                if app.system_selected_row == export_row_idx {
+                    vec![("Enter", "export report"), ("Tab", "next tab")]
+                } else {
+                    vec![("Space", "toggle"), ("Tab", "next tab")]
+                }
+            }
+        }
+    };
 
-        for (k, a) in keybinds {
-            let entry_len = k.len() + a.len() + 3;
-            if left_len + entry_len < width.saturating_sub(right_len + 2) {
-                left_spans.push(Span::styled(
-                    k,
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-                ));
-                left_spans.push(Span::raw(" "));
-                left_spans.push(Span::styled(format!("{a}  "), Style::default().fg(theme.dim)));
-                left_len += entry_len;
+    let mut left_spans = vec![Span::raw("  ")];
+    let mut left_len = 2;
+    let max_keybind_width = width.saturating_sub(right_len + status_len + if status_len > 0 { 4 } else { 2 });
+
+    for (k, a) in &keybinds {
+        let entry_len = k.len() + a.len() + 3;
+        if left_len + entry_len <= max_keybind_width {
+            left_spans.push(Span::styled(
+                *k,
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            ));
+            left_spans.push(Span::raw(" "));
+            left_spans.push(Span::styled(format!("{a}  "), Style::default().fg(theme.dim)));
+            left_len += entry_len;
+        }
+    }
+
+    if left_len <= 2 && !keybinds.is_empty() {
+        let (k, a) = keybinds[0];
+        let primary_len = k.len() + a.len() + 3;
+        left_spans.push(Span::styled(
+            k,
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+        ));
+        left_spans.push(Span::raw(" "));
+        left_spans.push(Span::styled(format!("{a}  "), Style::default().fg(theme.dim)));
+        left_len += primary_len;
+
+        let max_status = width.saturating_sub(right_len + left_len + 4);
+        if status_len > max_status {
+            if let Some((msg, is_error, _)) = &app.status_message {
+                let clean: String = msg.chars().take(max_status.saturating_sub(5)).collect();
+                status_spans.clear();
+                let prefix = if *is_error { "[!]" } else { "[ok]" };
+                let style = if *is_error {
+                    Style::default().fg(theme.err).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)
+                };
+                status_spans.push(Span::styled(format!("{prefix} {clean}"), style));
+                status_len = prefix.len() + 1 + clean.chars().count();
             }
         }
     }
 
     let mut total_spans = left_spans;
-    if width > left_len + right_len {
-        let pad = width - left_len - right_len;
-        total_spans.push(Span::raw(" ".repeat(pad)));
+    if status_len > 0 {
+        let pad_before = width.saturating_sub(left_len + status_len + right_len + 2).max(1);
+        total_spans.push(Span::raw(" ".repeat(pad_before)));
+        total_spans.extend(status_spans);
+        total_spans.push(Span::raw("  "));
     } else {
-        total_spans.push(Span::raw(" "));
+        let pad = width.saturating_sub(left_len + right_len).max(1);
+        total_spans.push(Span::raw(" ".repeat(pad)));
     }
     total_spans.extend(right_spans);
 
