@@ -747,5 +747,141 @@ async fn test_dashboard_footer_p_key_persistence() {
     assert!(footer_text.contains("[ok]"), "Footer must contain [ok] status indicator");
 }
 
+#[tokio::test]
+async fn test_voice_pulse_sensitivity_and_live_meter() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = ActiveTab::Aura;
+    app.aura_brightness = 2;
+
+    // Switch to Voice Pulse mode (idx 10)
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::VoicePulse;
+    assert_eq!(rogtui::ui::aura::get_current_mode_index(&app), 10);
+
+    // Verify field 7 is supported for Voice Pulse (Mic sensitivity)
+    assert!(rogtui::ui::aura::is_aura_field_supported(&app, 7));
+
+    // Initial voice sensitivity default should be 75
+    assert_eq!(app.voice_sensitivity, 75);
+
+    // Select field 7 and adjust with 'l' (+5) and 'h' (-5)
+    app.aura_selected_field = 7;
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('l'))).await;
+    assert_eq!(app.voice_sensitivity, 80);
+
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('h'))).await;
+    assert_eq!(app.voice_sensitivity, 75);
+
+    // Render Aura tab in test terminal and check for "Mic sensitivity"
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let test_backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(test_backend).unwrap();
+    terminal.draw(|f| rogtui::ui::render_ui(f, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+
+    let mut found_mic_sens = false;
+    for y in 0..30 {
+        let mut row_text = String::new();
+        for x in 0..100 {
+            row_text.push_str(buffer[(x, y)].symbol());
+        }
+        if row_text.contains("Mic sensitivity") && row_text.contains("75%") {
+            found_mic_sens = true;
+            break;
+        }
+    }
+    assert!(found_mic_sens, "Aura UI must render Mic sensitivity slider with live meter for Voice Pulse");
+}
+
+#[tokio::test]
+async fn test_spectrum_cycle_preset_and_audio_cava_dynamics() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = ActiveTab::Aura;
+    app.aura_brightness = 2;
+
+    // Verify Spectrum Cycle is in presets list
+    let presets = rogtui::ui::aura::get_color_presets();
+    let has_spectrum = presets.iter().any(|(name, col)| *name == "Spectrum Cycle" && *col == rogtui::backend::types::RgbColor::new(1, 1, 1));
+    assert!(has_spectrum, "Presets must include Spectrum Cycle");
+
+    // Set color to Spectrum Cycle
+    app.aura_data.color1 = rogtui::backend::types::RgbColor::new(1, 1, 1);
+    assert_eq!(rogtui::ui::aura::get_active_preset_name(app.aura_data.color1), "Spectrum Cycle");
+
+    // Activate Audio Pulse mode
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::AudioPulse;
+
+    // Compute color multiple times with simulated audio level to verify dynamic hue progression
+    let initial_hue = app.spectrum_pulse_hue;
+    let _ = app.compute_audio_pulse_color();
+    assert!(app.spectrum_pulse_hue > initial_hue, "Spectrum pulse hue should advance on audio frames");
+}
+
+#[tokio::test]
+async fn test_inline_effect_details_rendering() {
+    let backend = MockBackend::new();
+    let mut app = AppState::new(backend).await.expect("app init");
+    app.current_tab = ActiveTab::Aura;
+    app.aura_brightness = 2;
+    app.active_software_effect = rogtui::backend::types::SoftwareEffect::ColorCycle;
+
+    // Render Aura tab in test terminal
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let test_backend = TestBackend::new(120, 30);
+    let mut terminal = Terminal::new(test_backend).unwrap();
+    terminal.draw(|f| rogtui::ui::render_ui(f, &app)).unwrap();
+    let buffer = terminal.backend().buffer();
+
+    let mut mode_row = None;
+    let mut speed_row = None;
+    let mut has_separate_effect_details_row = false;
+
+    for y in 0..30 {
+        let mut row_text = String::new();
+        for x in 0..120 {
+            row_text.push_str(buffer[(x, y)].symbol());
+        }
+        if row_text.contains("Mode") && row_text.contains("Color Cycle") {
+            mode_row = Some(y);
+            // Verify description is inline on Mode row
+            assert!(row_text.contains("Sequential smooth crossfade"), "Effect description should be inline on Mode row");
+        }
+        if row_text.contains("Animation speed") {
+            speed_row = Some(y);
+        }
+        if row_text.starts_with("  Effect details") || row_text.contains("Effect details ") {
+            has_separate_effect_details_row = true;
+        }
+    }
+
+    assert!(!has_separate_effect_details_row, "There must NOT be a separate 'Effect details' row interrupting speed controls");
+    if let (Some(m), Some(s)) = (mode_row, speed_row) {
+        assert_eq!(s, m + 1, "Animation speed must immediately follow Mode row without intervening blank lines or rows");
+    }
+}
+
+#[tokio::test]
+async fn test_power_tab_compact_layout_no_spacers() {
+    let backend = MockBackend::new();
+    let app = AppState::new(backend).await.expect("app init");
+
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let test_backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(test_backend).unwrap();
+    terminal.draw(|f| rogtui::ui::power::render_power(f, &app, f.area())).unwrap();
+    let buffer = terminal.backend().buffer();
+
+    // Check line 0: should start directly with Profile section rule, not blank lines
+    let mut line0 = String::new();
+    for x in 0..100 {
+        line0.push_str(buffer[(x, 0)].symbol());
+    }
+    assert!(line0.contains("Profile"), "Power tab line 0 must start immediately with Profile rule, with zero top gap");
+}
+
 
 

@@ -14,10 +14,11 @@ use crate::ui::widgets::{
     slider_widget_tinted, toggle_widget,
 };
 
-pub fn get_color_presets() -> [(&'static str, RgbColor); 10] {
+pub fn get_color_presets() -> [(&'static str, RgbColor); 11] {
     let (_, theme_col) = crate::ui::theme::Theme::get_system_theme_color();
     [
         ("Dynamic Theme", theme_col),
+        ("Spectrum Cycle", RgbColor::new(1, 1, 1)),
         ("Gruvbox", RgbColor::new(235, 219, 178)),
         ("Catppuccin", RgbColor::new(245, 194, 231)),
         ("Cyberpunk", RgbColor::new(0, 255, 170)),
@@ -32,7 +33,9 @@ pub fn get_color_presets() -> [(&'static str, RgbColor); 10] {
 
 pub fn get_active_preset_name(color: RgbColor) -> &'static str {
     let (_, theme_col) = crate::ui::theme::Theme::get_system_theme_color();
-    if color == theme_col {
+    if color == RgbColor::new(1, 1, 1) {
+        "Spectrum Cycle"
+    } else if color == theme_col {
         "Dynamic Theme"
     } else if color == RgbColor::new(235, 219, 178) {
         "Gruvbox"
@@ -106,13 +109,14 @@ pub fn is_aura_field_supported<B: Backend>(app: &AppState<B>, field: usize) -> b
     let is_firmware_breathe = app.active_software_effect == SoftwareEffect::None && app.aura_mode == 1;
     let is_firmware_rainbow = app.active_software_effect == SoftwareEffect::None && app.aura_mode == 2;
     let is_animated = mode_idx == 4 || mode_idx == 5 || mode_idx == 6 || mode_idx == 7 || mode_idx == 9 || is_firmware_breathe || is_firmware_rainbow;
+    let is_voice_pulse = app.active_software_effect == SoftwareEffect::VoicePulse;
     let has_direction = mode_idx == 4 || is_firmware_rainbow;
 
     match field {
         0 | 1 | 9..=12 => true,
         2..=5 => supports_custom_color(app),
         6 => is_firmware_breathe,
-        7 => is_animated,
+        7 => is_animated || is_voice_pulse,
         8 => has_direction,
         13 | 14 => app.has_slash_led,
         _ => false,
@@ -123,17 +127,6 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let theme = &app.theme;
     let width = area.width as usize;
     let label_width = 18;
-
-    let content_len = if app.aura_brightness == 0 {
-        8
-    } else if supports_custom_color(app) {
-        15
-    } else {
-        10
-    } + if app.has_slash_led { 3 } else { 0 };
-
-    let num_gaps = if app.has_slash_led { 2 } else { 1 };
-    let spacers = crate::ui::widgets::distribute_spacers(area.height as usize, content_len, num_gaps, 3);
 
     let mut lines = Vec::new();
 
@@ -172,8 +165,6 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         ];
         let mode_idx = get_current_mode_index(app);
         let mode_name = mode_names.get(mode_idx).unwrap_or(&"Static");
-        let mode_spans = choice_widget(mode_name, app.aura_selected_field == 1, theme);
-        lines.push(label_value_row("Mode", mode_spans, app.aura_selected_field == 1, label_width, theme));
 
         let mode_desc = match mode_idx {
             0 => "Solid single-color illumination across keyboard zones.",
@@ -184,7 +175,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             5 => "Sequential smooth crossfade transitions through 7 primary colors.",
             6 => "Organic fireplace flame simulation with shifting amber and red embers.",
             7 => "Atmospheric drift between soft cyan, sky blue, and cloud white.",
-            8 => "Synchronizes keyboard lighting to active desktop theme from colors.sh.",
+            8 => "Synchronizes keyboard lighting to active desktop theme.",
             9 => "High-contrast blinking pulse.",
             10 => "Speech reactive illumination via internal laptop microphone.",
             11 => "Real-time system audio playback reactive pulse.",
@@ -197,12 +188,46 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
             18 => "Visual workload percentage monitor.",
             _ => "Keyboard lighting effect.",
         };
-        lines.push(label_value_row("Effect details", vec![Span::styled(mode_desc, Style::default().fg(theme.dim))], false, label_width, theme));
+        let mut mode_spans = choice_widget(mode_name, app.aura_selected_field == 1, theme);
+        mode_spans.push(Span::raw("   "));
+        mode_spans.push(Span::styled(mode_desc, Style::default().fg(theme.dim)));
+        lines.push(label_value_row("Mode", mode_spans, app.aura_selected_field == 1, label_width, theme));
 
-        // Optional Speed & Direction if supported by active mode
+        // Optional Speed & Direction or Voice Sensitivity if supported by active mode
         if is_aura_field_supported(app, 7) {
-            let speed_spans = choice_widget(&app.aura_data.speed, app.aura_selected_field == 7, theme);
-            lines.push(label_value_row("Animation speed", speed_spans, app.aura_selected_field == 7, label_width, theme));
+            if app.active_software_effect == SoftwareEffect::VoicePulse {
+                let sens = app.voice_sensitivity;
+                let raw_mic = app.audio_service.get_raw_mic_level();
+                let slider_spans = slider_widget_tinted(
+                    sens as u32,
+                    10,
+                    100,
+                    10,
+                    "%",
+                    app.aura_selected_field == 7,
+                    Some(theme.accent),
+                    theme,
+                );
+                let mut sens_spans = slider_spans;
+                sens_spans.push(Span::raw("   "));
+                sens_spans.push(Span::styled("Live: ", Style::default().fg(theme.dim)));
+                let meter_bars = (raw_mic as usize * 10 / 100).min(10);
+                let meter_fill = "█".repeat(meter_bars);
+                let meter_empty = "─".repeat(10 - meter_bars);
+                sens_spans.push(Span::styled("[", Style::default().fg(theme.dim)));
+                sens_spans.push(Span::styled(
+                    meter_fill,
+                    Style::default()
+                        .fg(if raw_mic > 60 { theme.warn } else { theme.ok })
+                        .add_modifier(Modifier::BOLD),
+                ));
+                sens_spans.push(Span::styled(meter_empty, Style::default().fg(theme.dim)));
+                sens_spans.push(Span::styled(format!("] {raw_mic}%"), Style::default().fg(theme.fg)));
+                lines.push(label_value_row("Mic sensitivity", sens_spans, app.aura_selected_field == 7, label_width, theme));
+            } else {
+                let speed_spans = choice_widget(&app.aura_data.speed, app.aura_selected_field == 7, theme);
+                lines.push(label_value_row("Animation speed", speed_spans, app.aura_selected_field == 7, label_width, theme));
+            }
         }
         if is_aura_field_supported(app, 8) {
             let dir_spans = choice_widget(&app.aura_data.direction, app.aura_selected_field == 8, theme);
@@ -213,14 +238,21 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         if is_aura_field_supported(app, 2) {
             let col = app.aura_data.color1;
             let preset_name = get_active_preset_name(col);
-            let swatch_color = Color::Rgb(col.r, col.g, col.b);
+            let is_spectrum = col == RgbColor::new(1, 1, 1);
+            let swatch_color = if is_spectrum {
+                theme.accent
+            } else {
+                Color::Rgb(col.r, col.g, col.b)
+            };
 
             // Row: Preset
             let preset_spans = choice_widget(preset_name, app.aura_selected_field == 2, theme);
             lines.push(label_value_row("Preset", preset_spans, app.aura_selected_field == 2, label_width, theme));
 
             // Row: Custom hex with 2-char block preview
-            let hex_str = if let Some(buf) = &app.hex_input_buffer {
+            let hex_str = if is_spectrum {
+                "Dynamic Hue".to_string()
+            } else if let Some(buf) = &app.hex_input_buffer {
                 format!("#{buf}_")
             } else {
                 col.to_hex()
@@ -287,9 +319,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         }
     }
 
-    for _ in 0..spacers[0] {
-        lines.push(Line::from(""));
-    }
+    lines.push(Line::from(""));
 
     // -------------------------------------------------------------------------
     // 2. Power States
@@ -334,9 +364,7 @@ pub fn render_aura<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     ));
 
     if app.has_slash_led {
-        for _ in 0..spacers.get(1).copied().unwrap_or(0) {
-            lines.push(Line::from(""));
-        }
+        lines.push(Line::from(""));
         lines.push(section_rule("Slash Lighting", width, theme));
 
         let is_slash_mode_sel = app.aura_selected_field == 13;

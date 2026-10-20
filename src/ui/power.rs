@@ -15,14 +15,7 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let width = area.width as usize;
     let label_width = 18;
 
-    // Base content lines: Profile (5) + Battery (5) + Status (5) = 15 lines.
-    // 4 gaps: top, between Profile & Battery, between Battery & Status, bottom.
-    let spacers = crate::ui::widgets::distribute_spacers(area.height as usize, 15, 4, 3);
-
     let mut lines = Vec::new();
-    for _ in 0..spacers[0] {
-        lines.push(Line::from(""));
-    }
 
     // -------------------------------------------------------------------------
     // 1. Profile Section
@@ -59,10 +52,7 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         crate::backend::types::PlatformProfile::Custom => "User-defined platform profile and fan curve parameters",
     };
     lines.push(label_value_row("Tuning profile", vec![Span::styled(prof_desc, Style::default().fg(theme.dim))], false, label_width, theme));
-
-    for _ in 0..spacers[1] {
-        lines.push(Line::from(""));
-    }
+    lines.push(Line::from(""));
 
     // -------------------------------------------------------------------------
     // 2. Battery Section
@@ -122,10 +112,7 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         _ => "100% full charge maximizes portable runtime; consider 80% on AC to prevent degradation.",
     };
     lines.push(label_value_row("Battery care", vec![Span::styled(advice, Style::default().fg(theme.dim))], false, label_width, theme));
-
-    for _ in 0..spacers[2] {
-        lines.push(Line::from(""));
-    }
+    lines.push(Line::from(""));
 
     // -------------------------------------------------------------------------
     // 3. Status Section (Read-only, skipped in navigation)
@@ -206,10 +193,6 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         label_width,
         theme,
     ));
-
-    for _ in 0..spacers[3] {
-        lines.push(Line::from(""));
-    }
 
     f.render_widget(Paragraph::new(lines), area);
 }

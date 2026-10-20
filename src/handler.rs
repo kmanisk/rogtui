@@ -1016,27 +1016,16 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             }
         }
         2 => {
-            let presets = [
-                crate::ui::aura::get_color_presets()[0].1, // Dynamic Theme
-                RgbColor::new(235, 219, 178),             // Gruvbox (#ebdbb2)
-                RgbColor::new(245, 194, 231),             // Catppuccin (#f5c2e7)
-                RgbColor::new(0, 255, 170),               // Cyberpunk (#00ffaa)
-                RgbColor::new(136, 192, 208),             // Nord (#88c0d0)
-                RgbColor::new(255, 122, 0),               // Sunset Amber (#ff7a00)
-                RgbColor::new(255, 0, 0),                 // Red
-                RgbColor::new(0, 255, 0),                 // Green
-                RgbColor::new(0, 136, 255),               // Blue
-                RgbColor::new(255, 255, 255),             // White
-            ];
-            let cur_pos = presets.iter().position(|p| *p == app.aura_data.color1).unwrap_or(0);
+            let presets = crate::ui::aura::get_color_presets();
+            let cur_pos = presets.iter().position(|(_, p)| *p == app.aura_data.color1).unwrap_or(0);
             let count = presets.len() as i32;
             let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
-            app.aura_data.color1 = presets[next_pos];
+            app.aura_data.color1 = presets[next_pos].1;
             app.user_custom_color = next_pos != 0;
             if app.aura_mode == 0 && app.aura_brightness > 0 {
                 let _ = app.backend.write_volatile_rgb(app.aura_data.color1).await;
             }
-            let preset_name = crate::ui::aura::get_active_preset_name(app.aura_data.color1);
+            let preset_name = presets[next_pos].0;
             app.set_status(format!("Preset applied: {} ({})", preset_name, app.aura_data.color1.to_hex()), false);
         }
         3 => {
@@ -1064,28 +1053,26 @@ async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
             }
         }
         6 => {
-            let presets = [
-                crate::ui::aura::get_color_presets()[0].1,
-                RgbColor::new(235, 219, 178),
-                RgbColor::new(245, 194, 231),
-                RgbColor::new(0, 255, 170),
-                RgbColor::new(136, 192, 208),
-                RgbColor::new(255, 122, 0),
-                RgbColor::new(255, 0, 0),
-                RgbColor::new(0, 255, 0),
-                RgbColor::new(0, 136, 255),
-                RgbColor::new(255, 255, 255),
-            ];
-            let cur_pos = presets.iter().position(|p| *p == app.aura_data.color2).unwrap_or(0);
+            let presets = crate::ui::aura::get_color_presets();
+            let cur_pos = presets.iter().position(|(_, p)| *p == app.aura_data.color2).unwrap_or(0);
             let count = presets.len() as i32;
             let next_pos = ((cur_pos as i32 + dir + count) % count) as usize;
-            app.aura_data.color2 = presets[next_pos];
+            app.aura_data.color2 = presets[next_pos].1;
         }
         7 => {
-            let speeds = ["low", "med", "high"];
-            let idx = speeds.iter().position(|s| s.eq_ignore_ascii_case(&app.aura_data.speed)).unwrap_or(1);
-            let n = ((idx as i32 + dir + 3) % 3) as usize;
-            app.aura_data.speed = speeds[n].to_string();
+            if app.active_software_effect == SoftwareEffect::VoicePulse {
+                let current = app.voice_sensitivity as i32;
+                let step = 5;
+                let next = (current + dir * step).clamp(10, 100) as u8;
+                app.voice_sensitivity = next;
+                app.audio_service.set_voice_sensitivity(next);
+                app.set_status(format!("Mic sensitivity set to {}%", next), false);
+            } else {
+                let speeds = ["low", "med", "high"];
+                let idx = speeds.iter().position(|s| s.eq_ignore_ascii_case(&app.aura_data.speed)).unwrap_or(1);
+                let n = ((idx as i32 + dir + 3) % 3) as usize;
+                app.aura_data.speed = speeds[n].to_string();
+            }
         }
         8 => {
             app.aura_data.direction = if app.aura_data.direction.eq_ignore_ascii_case("right") {

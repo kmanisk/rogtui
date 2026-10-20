@@ -78,6 +78,8 @@ pub enum ConfirmAction {
 pub struct AudioCaptureService {
     running: Arc<AtomicBool>,
     mic_level: Arc<AtomicU8>,
+    raw_mic_level: Arc<AtomicU8>,
+    voice_sensitivity: Arc<AtomicU8>,
     audio_level: Arc<AtomicU8>,
     thread_handle: Option<JoinHandle<()>>,
     current_source: Option<String>,
@@ -94,6 +96,8 @@ impl AudioCaptureService {
         Self {
             running: Arc::new(AtomicBool::new(false)),
             mic_level: Arc::new(AtomicU8::new(0)),
+            raw_mic_level: Arc::new(AtomicU8::new(0)),
+            voice_sensitivity: Arc::new(AtomicU8::new(75)),
             audio_level: Arc::new(AtomicU8::new(0)),
             thread_handle: None,
             current_source: None,
@@ -117,6 +121,8 @@ impl AudioCaptureService {
         } else {
             self.audio_level.clone()
         };
+        let voice_sens_atomic = self.voice_sensitivity.clone();
+        let raw_mic_atomic = self.raw_mic_level.clone();
         let src_str = source.to_string();
 
         let handle = std::thread::spawn(move || {
@@ -148,8 +154,7 @@ impl AudioCaptureService {
 
             use std::io::Read;
             let mut buf = [0u8; 400]; // 200 samples (25ms)
-            let mut rolling_peak: f32 = if is_mic { 4000.0 } else { 800.0 };
-            let mut noise_baseline: f32 = if is_mic { 900.0 } else { 150.0 };
+            let mut rolling_peak: f32 = if is_mic { 2500.0 } else { 800.0 };
             let mut decay_brightness: f32 = 0.0;
 
             while running_clone.load(Ordering::Relaxed) {
@@ -178,35 +183,45 @@ impl AudioCaptureService {
 
                 let current_f = max_amp as f32;
                 let raw_ratio = if is_mic {
-                    // Adaptively track ambient noise floor in quiet room so fan/room hiss never triggers pulses
-                    if current_f < noise_baseline * 1.5 {
-                        noise_baseline = noise_baseline * 0.96 + current_f * 0.04;
-                        noise_baseline = noise_baseline.clamp(400.0, 2200.0);
-                    }
-                    let speech_gate = (noise_baseline * 1.7).max(1200.0);
+                    let raw_meter = ((current_f / 3200.0) * 100.0).clamp(0.0, 100.0) as u8;
+                    raw_mic_atomic.store(raw_meter, Ordering::Relaxed);
+
+                    let sens = voice_sens_atomic.load(Ordering::Relaxed).clamp(10, 100) as f32 / 100.0;
+                    // Dynamic speech gate based on sensitivity:
+                    // 100% -> threshold 100 (whispers)
+                    // 75%  -> threshold 262 (conversational speech)
+                    // 50%  -> threshold 425 (moderate speech)
+                    // 10%  -> threshold 685 (loud speech)
+                    let speech_gate = 100.0 + (1.0 - sens) * 650.0;
                     if current_f <= speech_gate {
                         0.0
                     } else {
-                        rolling_peak = (rolling_peak * 0.95).max(current_f).max(4500.0);
-                        ((current_f - speech_gate) / (rolling_peak - speech_gate)).clamp(0.0, 1.0)
+                        let ceiling = (rolling_peak * 0.95).max(current_f).max(speech_gate + 600.0);
+                        rolling_peak = ceiling;
+                        ((current_f - speech_gate) / (ceiling - speech_gate)).clamp(0.0, 1.0)
                     }
                 } else {
-                    rolling_peak = (rolling_peak * 0.96).max(current_f).max(800.0);
-                    let noise_floor = 150.0;
+                    let ceiling = (rolling_peak * 0.95).max(current_f).max(750.0);
+                    rolling_peak = ceiling;
+                    let noise_floor = 40.0;
                     if current_f <= noise_floor {
                         0.0
                     } else {
-                        ((current_f - noise_floor) / (rolling_peak - noise_floor)).clamp(0.0, 1.0)
+                        ((current_f - noise_floor) / (ceiling - noise_floor)).clamp(0.0, 1.0)
                     }
                 };
 
-                let decay_rate = if is_mic { 0.65 } else { 0.72 };
+                let decay_rate = if is_mic { 0.70 } else { 0.65 };
                 decay_brightness = (decay_brightness * decay_rate).max(raw_ratio);
-                if decay_brightness < 0.03 {
+                if decay_brightness < 0.02 {
                     decay_brightness = 0.0;
                 }
 
-                let curved = decay_brightness * decay_brightness * decay_brightness;
+                let curved = if is_mic {
+                    decay_brightness.powf(1.3)
+                } else {
+                    decay_brightness.powf(1.15)
+                };
                 let level = (curved * 100.0).round().clamp(0.0, 100.0) as u8;
 
                 output_atomic.store(level, Ordering::Relaxed);
@@ -281,7 +296,16 @@ impl AudioCaptureService {
         }
         self.current_source = None;
         self.mic_level.store(0, Ordering::Relaxed);
+        self.raw_mic_level.store(0, Ordering::Relaxed);
         self.audio_level.store(0, Ordering::Relaxed);
+    }
+
+    pub fn set_voice_sensitivity(&self, val: u8) {
+        self.voice_sensitivity.store(val, Ordering::Relaxed);
+    }
+
+    pub fn get_raw_mic_level(&self) -> u8 {
+        self.raw_mic_level.load(Ordering::Relaxed)
     }
 
     pub fn get_mic_level(&self) -> u8 {
@@ -290,6 +314,40 @@ impl AudioCaptureService {
 
     pub fn get_audio_level(&self) -> u8 {
         self.audio_level.load(Ordering::Relaxed)
+    }
+
+    /// Automatically find the active audio output monitor on PipeWire/PulseAudio.
+    /// Priority: Active default sink monitor -> First RUNNING monitor -> Default monitor.
+    pub fn find_preferred_monitor_source() -> String {
+        if let Ok(output) = std::process::Command::new("pactl")
+            .arg("get-default-sink")
+            .output()
+        {
+            if output.status.success() {
+                let sink = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !sink.is_empty() {
+                    return format!("{sink}.monitor");
+                }
+            }
+        }
+        if let Ok(output) = std::process::Command::new("pactl")
+            .args(["list", "short", "sources"])
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let name = parts[1];
+                        if name.ends_with(".monitor") && (line.contains("RUNNING") || name.contains("analog-stereo")) {
+                            return name.to_string();
+                        }
+                    }
+                }
+            }
+        }
+        "@DEFAULT_MONITOR@".to_string()
     }
 }
 
@@ -517,6 +575,8 @@ pub struct AppState<B: Backend> {
     pub audio_level: u8,
     pub audio_level_smooth: f32,
     pub audio_wave_hue: f32,
+    pub spectrum_pulse_hue: f32,
+    pub voice_sensitivity: u8,
     pub last_ambient_color: Option<RgbColor>,
     pub clouds_phase: f32,
     pub theme_sync_phase: f32,
@@ -684,6 +744,8 @@ impl<B: Backend> AppState<B> {
             audio_level: 0,
             audio_level_smooth: 0.0,
             audio_wave_hue: 240.0,
+            spectrum_pulse_hue: 0.0,
+            voice_sensitivity: 75,
             last_ambient_color: None,
             clouds_phase: 0.0,
             theme_sync_phase: 0.0,
@@ -1172,12 +1234,17 @@ impl<B: Backend> AppState<B> {
     /// Priority: Defaults to active system desktop theme color; overridden by user-specified custom color.
     /// At brightness 1 (Low), pulses between 0 (off) and 1 (lit) on speech sound.
     pub fn compute_voice_pulse_color(&mut self) -> RgbColor {
+        self.audio_service.set_voice_sensitivity(self.voice_sensitivity);
         let mic_source = AudioCaptureService::find_preferred_mic_source();
         self.audio_service.start(&mic_source);
         let level = self.audio_service.get_mic_level();
         self.mic_level = level;
 
-        let c = if !self.user_custom_color
+        let c = if self.aura_data.color1 == RgbColor::new(1, 1, 1) {
+            let hue_step = 1.0 + (level as f32) * 0.40;
+            self.spectrum_pulse_hue = (self.spectrum_pulse_hue + hue_step) % 360.0;
+            RgbColor::from_hsv(self.spectrum_pulse_hue, 100.0, 100.0)
+        } else if !self.user_custom_color
             || (self.aura_data.color1.r == 0
                 && self.aura_data.color1.g == 0
                 && self.aura_data.color1.b == 0)
@@ -1217,13 +1284,19 @@ impl<B: Backend> AppState<B> {
 
     /// Audio Pulse: Sound output reactive visualizer via non-blocking worker.
     /// Priority: Defaults to active system desktop theme color; overridden by user-specified custom color.
+    /// Supports "Spectrum Cycle" preset where hues dynamically shift to beat rhythms like Cava.
     /// At brightness 1 (Low), pulses between 0 (off) and 1 (lit) on beat drops.
     pub fn compute_audio_pulse_color(&mut self) -> RgbColor {
-        self.audio_service.start("@DEFAULT_MONITOR@");
+        let mon_source = AudioCaptureService::find_preferred_monitor_source();
+        self.audio_service.start(&mon_source);
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
 
-        let c = if !self.user_custom_color
+        let c = if self.aura_data.color1 == RgbColor::new(1, 1, 1) {
+            let hue_step = 1.2 + (level as f32) * 0.45;
+            self.spectrum_pulse_hue = (self.spectrum_pulse_hue + hue_step) % 360.0;
+            RgbColor::from_hsv(self.spectrum_pulse_hue, 100.0, 100.0)
+        } else if !self.user_custom_color
             || (self.aura_data.color1.r == 0
                 && self.aura_data.color1.g == 0
                 && self.aura_data.color1.b == 0)
@@ -1263,7 +1336,8 @@ impl<B: Backend> AppState<B> {
     /// Audio Wave: Dynamic audio spectrum EQ via non-blocking worker.
     /// Smoothly transitions color across the spectrum based on playback intensity.
     pub fn compute_audio_wave_color(&mut self) -> RgbColor {
-        self.audio_service.start("@DEFAULT_MONITOR@");
+        let mon_source = AudioCaptureService::find_preferred_monitor_source();
+        self.audio_service.start(&mon_source);
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
 
@@ -1309,25 +1383,26 @@ impl<B: Backend> AppState<B> {
     /// while audio playback levels modulate the brightness and energy rhythm.
     pub fn compute_ambient_audio_sync_color(&mut self) -> RgbColor {
         self.ambient_service.start();
-        self.audio_service.start("@DEFAULT_MONITOR@");
+        let mon_source = AudioCaptureService::find_preferred_monitor_source();
+        self.audio_service.start(&mon_source);
 
         let base_col = self.compute_ambient_color();
         let level = self.audio_service.get_audio_level();
         self.audio_level = level;
 
         let raw_level = level as f32;
-        let alpha = if raw_level > self.audio_level_smooth { 0.35 } else { 0.12 };
+        let alpha = if raw_level > self.audio_level_smooth { 0.45 } else { 0.15 };
         self.audio_level_smooth = self.audio_level_smooth * (1.0 - alpha) + raw_level * alpha;
 
         if self.aura_brightness == 1 && level == 0 {
             RgbColor::new(0, 0, 0)
         } else {
-            let mult = 0.20 + 0.80 * (self.audio_level_smooth / 100.0);
-            RgbColor::new(
-                (base_col.r as f32 * mult).min(255.0) as u8,
-                (base_col.g as f32 * mult).min(255.0) as u8,
-                (base_col.b as f32 * mult).min(255.0) as u8,
-            )
+            let energy = (self.audio_level_smooth / 100.0).clamp(0.0, 1.0);
+            let brightness_factor = 0.18 + 0.82 * energy.powf(1.1);
+            let (h, s, v) = base_col.to_hsv();
+            let dyn_s = (s + energy * 25.0).clamp(0.0, 100.0);
+            let dyn_v = (v * brightness_factor).clamp(0.0, 100.0);
+            RgbColor::from_hsv(h, dyn_s, dyn_v)
         }
     }
 
