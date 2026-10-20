@@ -246,7 +246,9 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
     let val_w = 16;
     let bar_w = 20;
 
-    let compact = area.height < 23;
+    // Distribute extra vertical space evenly across section gaps so the Dashboard
+    // takes the full window height cleanly without an empty void at the bottom.
+    let spacers = crate::ui::widgets::distribute_spacers(area.height as usize, 18, 5, 2);
 
     let mut lines = Vec::new();
 
@@ -264,7 +266,7 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         val_w,
         theme,
     ));
-    if !compact {
+    for _ in 0..spacers[0] {
         lines.push(Line::from(""));
     }
 
@@ -315,7 +317,7 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         Span::raw("            "),
         Span::styled(cpu_detail, Style::default().fg(theme.dim)),
     ]));
-    if !compact {
+    for _ in 0..spacers[1] {
         lines.push(Line::from(""));
     }
 
@@ -374,7 +376,7 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         Span::raw("            "),
         Span::styled(gpu_detail, Style::default().fg(theme.dim)),
     ]));
-    if !compact {
+    for _ in 0..spacers[2] {
         lines.push(Line::from(""));
     }
 
@@ -404,7 +406,7 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         val_w,
         theme,
     ));
-    if !compact {
+    for _ in 0..spacers[3] {
         lines.push(Line::from(""));
     }
 
@@ -503,7 +505,7 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         bat_details.push(Span::styled("AC Wall Power", Style::default().fg(theme.dim)));
     }
     lines.push(Line::from(bat_details));
-    if !compact {
+    for _ in 0..spacers[4] {
         lines.push(Line::from(""));
     }
 

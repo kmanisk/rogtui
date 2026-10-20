@@ -174,19 +174,29 @@ async fn test_aura_brightness_guardrail() {
     app.aura_brightness = 0; // Off
     app.aura_selected_field = 0;
 
-    // Press 'j' (Down) -> moves to field 1 (Effect Mode), remaining accessible when brightness is 0
+    // When brightness is 0 (Off), pressing 'j' (Down) must skip mode/color fields (1..=8)
+    // and jump directly to field 9 (Boot hardware power state).
     rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('j'))).await;
-    assert_eq!(app.aura_selected_field, 1, "Mode and effect controls remain accessible when brightness is 0");
+    assert_eq!(app.aura_selected_field, 9, "Mode controls must be skipped when brightness is 0");
 
-    // Adjust effect mode with 'l' while brightness is 0 -> updates state so it is applied when turned on
+    // Pressing 'k' (Up) from Boot moves back to field 0 (Brightness)
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('k'))).await;
+    assert_eq!(app.aura_selected_field, 0, "Up from Boot must move back to Brightness");
+
+    // Mode cannot be changed while brightness is 0
     let initial_mode = app.aura_mode;
+    app.aura_selected_field = 1; // Even if forced to 1
     rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('l'))).await;
-    assert_ne!(app.aura_mode, initial_mode, "Effect mode should change when configured while backlight is off");
+    assert_eq!(app.aura_mode, initial_mode, "Effect mode must not change when brightness is 0");
 
     // Now turn brightness up to 1 (Low) on field 0
     app.aura_selected_field = 0;
     rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('l'))).await;
     assert_eq!(app.aura_brightness, 1, "Brightness should be Low (1)");
+
+    // With brightness > 0, pressing 'j' (Down) now properly accesses field 1 (Mode)
+    rogtui::handler::handle_key_event(&mut app, crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char('j'))).await;
+    assert_eq!(app.aura_selected_field, 1, "Mode must be accessible when brightness > 0");
 }
 
 #[tokio::test]

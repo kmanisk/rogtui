@@ -877,10 +877,16 @@ async fn handle_aura<B: Backend>(app: &mut AppState<B>, key: KeyEvent) {
             adjust_aura_field(app, 1).await;
         }
         KeyCode::Char('c') => {
+            if app.aura_brightness == 0 {
+                return;
+            }
             let slot = if app.aura_selected_field == 6 { 2 } else { 1 };
             app.open_color_picker(slot);
         }
         KeyCode::Char('#') => {
+            if app.aura_brightness == 0 {
+                return;
+            }
             app.hex_input_buffer = Some(String::new());
             app.set_status("Enter 6 hex digits (e.g. ff4080) and press Enter:", false);
         }
@@ -918,12 +924,18 @@ async fn activate_software_mode<B: Backend>(app: &mut AppState<B>, effect: Softw
 }
 
 async fn adjust_aura_field<B: Backend>(app: &mut AppState<B>, dir: i32) {
+    if app.aura_brightness == 0 && (1..=8).contains(&app.aura_selected_field) {
+        return;
+    }
     match app.aura_selected_field {
         0 => {
             let b = (app.aura_brightness as i32 + dir).clamp(0, 3) as u32;
             app.aura_brightness = b;
             let _ = app.backend.set_aura_brightness(b).await;
             if b == 0 {
+                if (1..=8).contains(&app.aura_selected_field) {
+                    app.aura_selected_field = 0;
+                }
                 if app.active_software_effect != SoftwareEffect::None {
                     app.saved_software_effect = Some(app.active_software_effect);
                 }

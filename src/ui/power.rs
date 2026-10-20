@@ -15,8 +15,14 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     let width = area.width as usize;
     let label_width = 18;
 
+    // Base content lines: Profile (5) + Battery (5) + Status (5) = 15 lines.
+    // 4 gaps: top, between Profile & Battery, between Battery & Status, bottom.
+    let spacers = crate::ui::widgets::distribute_spacers(area.height as usize, 15, 4, 3);
+
     let mut lines = Vec::new();
-    lines.push(Line::from(""));
+    for _ in 0..spacers[0] {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 1. Profile Section
@@ -44,7 +50,19 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
     };
     let bat_spans = choice_widget(bat_label, app.power_selected_field == 2, theme);
     lines.push(label_value_row("On battery", bat_spans, app.power_selected_field == 2, label_width, theme));
-    lines.push(Line::from(""));
+
+    // Profile characteristics details
+    let prof_desc = match app.platform_profile {
+        crate::backend::types::PlatformProfile::Balanced => "Balanced CPU/GPU wattage · Dynamic fan curve · Everyday computing",
+        crate::backend::types::PlatformProfile::Performance => "Max sustained wattage · Higher thermal headroom · Gaming & compute",
+        crate::backend::types::PlatformProfile::Quiet => "Conservative power limits · Acoustic ceiling · Extended battery life",
+        crate::backend::types::PlatformProfile::Custom => "User-defined platform profile and fan curve parameters",
+    };
+    lines.push(label_value_row("Tuning profile", vec![Span::styled(prof_desc, Style::default().fg(theme.dim))], false, label_width, theme));
+
+    for _ in 0..spacers[1] {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 2. Battery Section
@@ -96,7 +114,18 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         one_shot_spans.push(Span::styled("   Charge to 100% once for travel", Style::default().fg(theme.dim)));
     }
     lines.push(label_value_row("Full charge once", one_shot_spans, app.power_selected_field == 4, label_width, theme));
-    lines.push(Line::from(""));
+
+    // Battery care guidance
+    let advice = match app.charge_limit {
+        40..=65 => "Preserves lithium cells by reducing high-voltage anode stress (recommended for AC power).",
+        66..=85 => "Balanced threshold extending battery lifespan by 2-3x while retaining portable runtime.",
+        _ => "100% full charge maximizes portable runtime; consider 80% on AC to prevent degradation.",
+    };
+    lines.push(label_value_row("Battery care", vec![Span::styled(advice, Style::default().fg(theme.dim))], false, label_width, theme));
+
+    for _ in 0..spacers[2] {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 3. Status Section (Read-only, skipped in navigation)
@@ -156,6 +185,31 @@ pub fn render_power<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect) {
         label_width,
         theme,
     ));
+
+    let supply_text = if is_charging {
+        "AC Adapter (Charging battery)"
+    } else if is_full {
+        "AC Wall Power (Battery fully charged)"
+    } else if let Some(w) = power_w {
+        if w > 0.0 {
+            "Internal Battery (Discharging)"
+        } else {
+            "AC Adapter (Wall Power)"
+        }
+    } else {
+        "AC Wall Power"
+    };
+    lines.push(label_value_row(
+        "Power source",
+        vec![Span::styled(supply_text, Style::default().fg(theme.fg))],
+        false,
+        label_width,
+        theme,
+    ));
+
+    for _ in 0..spacers[3] {
+        lines.push(Line::from(""));
+    }
 
     f.render_widget(Paragraph::new(lines), area);
 }

@@ -39,6 +39,27 @@ pub fn section_rule(title: &str, width: usize, theme: &Theme) -> Line<'static> {
     ])
 }
 
+pub fn distribute_spacers(available: usize, content_len: usize, gaps: usize, max_gap: usize) -> Vec<usize> {
+    if gaps == 0 {
+        return Vec::new();
+    }
+    let extra = available.saturating_sub(content_len);
+    let mut spacers = vec![0; gaps];
+    if extra == 0 {
+        return spacers;
+    }
+    let per_gap = (extra / gaps).min(max_gap);
+    let mut remainder = extra.saturating_sub(per_gap * gaps).min(gaps);
+    for s in &mut spacers {
+        *s = per_gap;
+        if remainder > 0 && *s < max_gap {
+            *s += 1;
+            remainder -= 1;
+        }
+    }
+    spacers
+}
+
 pub fn label_value_row(
     label: &str,
     value_spans: Vec<Span<'static>>,
@@ -429,13 +450,14 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
                 format!("[!] {clean_msg}"),
                 Style::default().fg(theme.err).add_modifier(Modifier::BOLD),
             ));
+            left_len += clean_msg.chars().count() + 4;
         } else {
             left_spans.push(Span::styled(
-                format!("✓ {clean_msg}"),
+                format!("[ok] {clean_msg}"),
                 Style::default().fg(theme.ok).add_modifier(Modifier::BOLD),
             ));
+            left_len += clean_msg.chars().count() + 5;
         }
-        left_len += clean_msg.chars().count() + 4;
     } else if let Some((clamp_hint, _)) = &app.fan_clamp_hint {
         let max_hint_len = width.saturating_sub(right_len + 6);
         let clean_hint = if clamp_hint.chars().count() > max_hint_len {
@@ -477,18 +499,28 @@ pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, t
                     ("w", "apply"),
                 ],
                 ActiveTab::Aura => {
-                    match app.aura_selected_field {
-                        0 => vec![("h/l", "brightness")],
-                        1 => vec![("h/l", "mode")],
-                        2 => vec![("h/l", "preset"), ("c", "picker"), ("#", "hex")],
-                        3..=5 => vec![("h/l", "adjust channel")],
-                        6 => vec![("h/l", "secondary preset")],
-                        7 => vec![("h/l", "speed")],
-                        8 => vec![("h/l", "direction")],
-                        9..=12 => vec![("Space", "toggle")],
-                        13 => vec![("h/l", "slash mode")],
-                        14 => vec![("h/l", "slash brightness")],
-                        _ => vec![("h/l", "adjust")],
+                    if app.aura_brightness == 0 {
+                        match app.aura_selected_field {
+                            0 => vec![("h/l", "brightness")],
+                            9..=12 => vec![("Space", "toggle")],
+                            13 => vec![("h/l", "slash mode")],
+                            14 => vec![("h/l", "slash brightness")],
+                            _ => vec![("h/l", "brightness")],
+                        }
+                    } else {
+                        match app.aura_selected_field {
+                            0 => vec![("h/l", "brightness")],
+                            1 => vec![("h/l", "mode")],
+                            2 => vec![("h/l", "preset"), ("c", "picker"), ("#", "hex")],
+                            3..=5 => vec![("h/l", "adjust channel")],
+                            6 => vec![("h/l", "secondary preset")],
+                            7 => vec![("h/l", "speed")],
+                            8 => vec![("h/l", "direction")],
+                            9..=12 => vec![("Space", "toggle")],
+                            13 => vec![("h/l", "slash mode")],
+                            14 => vec![("h/l", "slash brightness")],
+                            _ => vec![("h/l", "adjust")],
+                        }
                     }
                 }
                 ActiveTab::System => {
