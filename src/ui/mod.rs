@@ -17,7 +17,7 @@ use ratatui::{
 use crate::app::{ActiveTab, AppState};
 use crate::backend::Backend;
 use crate::ui::widgets::{
-    panel_block, render_confirm_modal, render_footer_two_rows, render_help_overlay,
+    panel_block, render_confirm_modal, render_footer, render_help_overlay,
     render_horizontal_rule, render_tab_bar,
 };
 
@@ -49,8 +49,7 @@ pub fn render_ui<B: Backend>(f: &mut Frame, app: &AppState<B>) {
     // Row 2: dim horizontal rule (1)
     // Row 3..N: tab content (Min 10)
     // Row N+1: dim horizontal rule (1)
-    // Row N+2: hint line / toast (1)
-    // Row N+3: key hints (1)
+    // Row N+2: single-line footer (1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -59,8 +58,7 @@ pub fn render_ui<B: Backend>(f: &mut Frame, app: &AppState<B>) {
             Constraint::Length(1), // Row 2: dim rule
             Constraint::Min(10),   // Row 3..N: content
             Constraint::Length(1), // Row N+1: dim rule
-            Constraint::Length(1), // Row N+2: hint / toast
-            Constraint::Length(1), // Row N+3: context keys
+            Constraint::Length(1), // Row N+2: single-line footer
         ])
         .split(content_rect);
 
@@ -76,8 +74,7 @@ pub fn render_ui<B: Backend>(f: &mut Frame, app: &AppState<B>) {
     }
 
     render_horizontal_rule(f, chunks[4], &app.theme);
-    let hint = app.get_active_hint();
-    render_footer_two_rows(f, chunks[5], chunks[6], &hint, app, &app.theme);
+    render_footer(f, chunks[5], app, &app.theme);
 
     if app.show_help {
         render_help_overlay(f, size, app.current_tab, &app.theme);

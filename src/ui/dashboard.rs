@@ -40,102 +40,200 @@ fn dot_to_bit(dx: usize, dy: usize) -> u8 {
     }
 }
 
-fn render_temp_braille_chart(
-    cpu_history: &[u64],
-    gpu_history: &[u64],
+fn plot_single_series(history: &[u64], plot_w: usize, plot_h: usize) -> Vec<Vec<u8>> {
+    let px_w = plot_w * 2;
+    let px_h = plot_h * 4;
+    let mut grid = vec![vec![0u8; plot_w]; plot_h];
+
+    if history.is_empty() || plot_w == 0 || plot_h == 0 {
+        return grid;
+    }
+
+    let count = history.len();
+    let mut prev: Option<(usize, usize)> = None;
+
+    for (i, &temp) in history.iter().enumerate() {
+        if temp == 0 {
+            prev = None;
+            continue;
+        }
+        let px = if count <= 1 {
+            0
+        } else {
+            (i * (px_w.saturating_sub(1))) / (count - 1)
+        };
+        // Normalize between 30°C and 90°C (60°C range across 12 vertical dots = exactly 5°C/dot)
+        let t_norm = ((temp as f32 - 30.0) / 60.0).clamp(0.0, 1.0);
+        let py = (t_norm * (px_h - 1) as f32).round() as usize;
+        let py_inv = (px_h - 1).saturating_sub(py);
+
+        if let Some((x0, y0)) = prev {
+            let steps = px.abs_diff(x0).max(py_inv.abs_diff(y0)).max(1);
+            for s in 0..=steps {
+                let cur_x = x0 + (px.saturating_sub(x0) * s) / steps;
+                let cur_y = if py_inv >= y0 {
+                    y0 + ((py_inv - y0) * s) / steps
+                } else {
+                    y0 - ((y0 - py_inv) * s) / steps
+                };
+                let cx = (cur_x / 2).min(plot_w.saturating_sub(1));
+                let cy = (cur_y / 4).min(plot_h.saturating_sub(1));
+                let dx = cur_x % 2;
+                let dy = cur_y % 4;
+                grid[cy][cx] |= dot_to_bit(dx, dy);
+            }
+        } else {
+            let cx = (px / 2).min(plot_w.saturating_sub(1));
+            let cy = (py_inv / 4).min(plot_h.saturating_sub(1));
+            let dx = px % 2;
+            let dy = py_inv % 4;
+            grid[cy][cx] |= dot_to_bit(dx, dy);
+        }
+        prev = Some((px, py_inv));
+    }
+
+    grid
+}
+
+struct TempSeriesInfo<'a> {
+    label: &'a str,
+    dot_color: Color,
+    history: &'a [u64],
+    temp: u32,
+    rpm: u32,
+    is_idle: bool,
+}
+
+fn format_temp_legend(
+    info: &TempSeriesInfo,
+    col_w: usize,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled("● ", Style::default().fg(info.dot_color)));
+
+    if info.is_idle && info.temp == 0 {
+        spans.push(Span::styled(format!("{} Idle", info.label), Style::default().fg(theme.dim)));
+        let cur_len = 2 + 2 + info.label.len() + 5;
+        if col_w >= cur_len + 10 {
+            spans.push(Span::raw("   "));
+            spans.push(Span::styled("D3cold", Style::default().fg(theme.dim)));
+        }
+    } else {
+        spans.push(Span::styled(
+            format!("{} {}°C", info.label, info.temp),
+            Style::default().fg(theme.temp_color(info.temp)).add_modifier(Modifier::BOLD),
+        ));
+
+        let peak = info.history.iter().copied().max().unwrap_or(info.temp as u64).max(info.temp as u64) as u32;
+        if col_w >= 28 {
+            spans.push(Span::raw("   "));
+            spans.push(Span::styled(format!("Peak {peak}°C"), Style::default().fg(theme.dim)));
+        }
+
+        if col_w >= 39 && info.rpm > 0 {
+            spans.push(Span::raw("   "));
+            spans.push(Span::styled(format!("{} rpm", info.rpm), Style::default().fg(theme.dim)));
+        }
+    }
+
+    let len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+    if len < col_w {
+        spans.push(Span::raw(" ".repeat(col_w - len)));
+    }
+    spans
+}
+
+fn render_two_temp_charts(
+    cpu: &TempSeriesInfo,
+    gpu: &TempSeriesInfo,
     width: usize,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let label_w = 7;
-    let plot_w = width.saturating_sub(label_w + 4).clamp(20, 92);
-    let plot_h = 4; // 4 rows = 16 pixels high
+    let gap = if width >= 90 { 4 } else { 2 };
+    let left_col_w = (width.saturating_sub(gap)) / 2;
+    let right_col_w = width.saturating_sub(left_col_w + gap);
 
-    let px_w = plot_w * 2;
-    let px_h = plot_h * 4;
+    let plot_h = 3;
+    let label_w = 8;
+    let plot_w_left = left_col_w.saturating_sub(label_w);
+    let plot_w_right = right_col_w.saturating_sub(label_w);
 
-    let mut cpu_grid = vec![vec![0u8; plot_w]; plot_h];
-    let mut gpu_grid = vec![vec![0u8; plot_w]; plot_h];
+    let cpu_grid = plot_single_series(cpu.history, plot_w_left, plot_h);
+    let gpu_grid = plot_single_series(gpu.history, plot_w_right, plot_h);
 
-    let plot_series = |history: &[u64], grid: &mut Vec<Vec<u8>>| {
-        if history.is_empty() {
-            return;
-        }
-        let count = history.len();
-        let mut prev: Option<(usize, usize)> = None;
-
-        for (i, &temp) in history.iter().enumerate() {
-            let px = if count <= 1 {
-                0
-            } else {
-                (i * (px_w - 1)) / (count - 1)
-            };
-            let t_norm = ((temp as f32 - 30.0) / 70.0).clamp(0.0, 1.0);
-            let py = (t_norm * (px_h - 1) as f32).round() as usize;
-            let py_inv = (px_h - 1).saturating_sub(py);
-
-            if let Some((x0, y0)) = prev {
-                let steps = px.abs_diff(x0).max(py_inv.abs_diff(y0)).max(1);
-                for s in 0..=steps {
-                    let cur_x = x0 + (px.saturating_sub(x0) * s) / steps;
-                    let cur_y = if py_inv >= y0 {
-                        y0 + ((py_inv - y0) * s) / steps
-                    } else {
-                        y0 - ((y0 - py_inv) * s) / steps
-                    };
-                    let cx = (cur_x / 2).min(plot_w - 1);
-                    let cy = (cur_y / 4).min(plot_h - 1);
-                    let dx = cur_x % 2;
-                    let dy = cur_y % 4;
-                    grid[cy][cx] |= dot_to_bit(dx, dy);
-                }
-            } else {
-                let cx = (px / 2).min(plot_w - 1);
-                let cy = (py_inv / 4).min(plot_h - 1);
-                let dx = px % 2;
-                let dy = py_inv % 4;
-                grid[cy][cx] |= dot_to_bit(dx, dy);
-            }
-            prev = Some((px, py_inv));
-        }
-    };
-
-    plot_series(cpu_history, &mut cpu_grid);
-    plot_series(gpu_history, &mut gpu_grid);
-
-    let y_labels = ["100°C │", " 75°C │", " 50°C │", " 30°C │"];
     let mut lines = Vec::new();
 
+    // 1. Legend Row
+    let mut legend_spans = format_temp_legend(cpu, left_col_w, theme);
+    legend_spans.push(Span::raw(" ".repeat(gap)));
+    let right_legend_spans = format_temp_legend(gpu, right_col_w, theme);
+    legend_spans.extend(right_legend_spans);
+    lines.push(Line::from(legend_spans));
+
+    // 2. Braille Rows (8 chars: 2 spaces indent + 5 chars temp + 1 char pipe)
+    let y_labels = ["  90°C │", "  60°C │", "  30°C │"];
+    let gpu_is_idle = gpu.is_idle && (gpu.temp == 0 || gpu.history.iter().all(|&t| t == 0));
+
     for row in 0..plot_h {
-        let mut spans = vec![
-            Span::raw("  "),
-            Span::styled(y_labels[row], Style::default().fg(theme.dim)),
-        ];
+        let mut row_spans = Vec::new();
 
-        for col in 0..plot_w {
-            let cpu_bits = cpu_grid[row][col];
-            let gpu_bits = gpu_grid[row][col];
-
-            if cpu_bits > 0 && gpu_bits > 0 {
-                let ch = char::from_u32(0x2800 + (cpu_bits | gpu_bits) as u32).unwrap_or(' ');
-                spans.push(Span::styled(
-                    ch.to_string(),
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-                ));
-            } else if cpu_bits > 0 {
-                let ch = char::from_u32(0x2800 + cpu_bits as u32).unwrap_or(' ');
-                spans.push(Span::styled(ch.to_string(), Style::default().fg(theme.accent)));
-            } else if gpu_bits > 0 {
-                let ch = char::from_u32(0x2800 + gpu_bits as u32).unwrap_or(' ');
-                spans.push(Span::styled(ch.to_string(), Style::default().fg(Color::Magenta)));
+        // Left chart (CPU)
+        row_spans.push(Span::styled(y_labels[row], Style::default().fg(theme.dim)));
+        for &bits in cpu_grid[row].iter().take(plot_w_left) {
+            if bits > 0 {
+                let ch = char::from_u32(0x2800 + bits as u32).unwrap_or(' ');
+                row_spans.push(Span::styled(ch.to_string(), Style::default().fg(theme.accent)));
             } else {
-                spans.push(Span::raw(" "));
+                row_spans.push(Span::raw(" "));
             }
         }
-        lines.push(Line::from(spans));
+
+        // Gap
+        row_spans.push(Span::raw(" ".repeat(gap)));
+
+        // Right chart (GPU)
+        row_spans.push(Span::styled(y_labels[row], Style::default().fg(theme.dim)));
+        if gpu_is_idle {
+            if row == 1 {
+                let msg = "[ dGPU Suspended in D3cold ]";
+                let msg_len = msg.chars().count();
+                if plot_w_right >= msg_len {
+                    let left_pad = (plot_w_right - msg_len) / 2;
+                    let right_pad = plot_w_right - msg_len - left_pad;
+                    row_spans.push(Span::raw(" ".repeat(left_pad)));
+                    row_spans.push(Span::styled(msg, Style::default().fg(theme.dim)));
+                    row_spans.push(Span::raw(" ".repeat(right_pad)));
+                } else {
+                    row_spans.push(Span::raw(" ".repeat(plot_w_right)));
+                }
+            } else {
+                row_spans.push(Span::raw(" ".repeat(plot_w_right)));
+            }
+        } else {
+            for &bits in gpu_grid[row].iter().take(plot_w_right) {
+                if bits > 0 {
+                    let ch = char::from_u32(0x2800 + bits as u32).unwrap_or(' ');
+                    row_spans.push(Span::styled(ch.to_string(), Style::default().fg(Color::Magenta)));
+                } else {
+                    row_spans.push(Span::raw(" "));
+                }
+            }
+        }
+
+        lines.push(Line::from(row_spans));
     }
 
-    let bottom_rule = format!("       └{}", "─".repeat(plot_w));
-    lines.push(Line::from(Span::styled(bottom_rule, Style::default().fg(Color::Rgb(65, 75, 85)))));
+    // 3. Bottom Axis Row (7 spaces + 1 corner = 8 chars, exactly aligning with │ above)
+    let bottom_spans = vec![
+        Span::styled("       └", Style::default().fg(Color::Rgb(65, 75, 85))),
+        Span::styled("─".repeat(plot_w_left), Style::default().fg(Color::Rgb(65, 75, 85))),
+        Span::raw(" ".repeat(gap)),
+        Span::styled("       └", Style::default().fg(Color::Rgb(65, 75, 85))),
+        Span::styled("─".repeat(plot_w_right), Style::default().fg(Color::Rgb(65, 75, 85))),
+    ];
+    lines.push(Line::from(bottom_spans));
 
     lines
 }
@@ -147,6 +245,8 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
     let label_w = 9;
     let val_w = 16;
     let bar_w = 20;
+
+    let compact = area.height < 23;
 
     let mut lines = Vec::new();
 
@@ -164,7 +264,9 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         val_w,
         theme,
     ));
-    lines.push(Line::from(""));
+    if !compact {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 1. Processor
@@ -213,7 +315,9 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         Span::raw("            "),
         Span::styled(cpu_detail, Style::default().fg(theme.dim)),
     ]));
-    lines.push(Line::from(""));
+    if !compact {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 2. Graphics
@@ -270,7 +374,9 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         Span::raw("            "),
         Span::styled(gpu_detail, Style::default().fg(theme.dim)),
     ]));
-    lines.push(Line::from(""));
+    if !compact {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 3. Memory
@@ -298,7 +404,9 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         val_w,
         theme,
     ));
-    lines.push(Line::from(""));
+    if !compact {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
     // 4. Battery
@@ -395,25 +503,41 @@ pub fn render_dashboard<B: Backend>(f: &mut Frame, app: &AppState<B>, area: Rect
         bat_details.push(Span::styled("AC Wall Power", Style::default().fg(theme.dim)));
     }
     lines.push(Line::from(bat_details));
-    lines.push(Line::from(""));
+    if !compact {
+        lines.push(Line::from(""));
+    }
 
     // -------------------------------------------------------------------------
-    // 5. Temperatures, last 2 min (Braille Line Chart)
+    // 5. Temperatures, last 2 min (Two side-by-side Braille Line Charts)
     // -------------------------------------------------------------------------
     lines.push(section_rule("Temperatures, last 2 min", width, theme));
 
     let cpu_history: Vec<u64> = app.cpu_temp_history.iter().copied().collect();
     let gpu_history: Vec<u64> = app.gpu_temp_history.iter().copied().collect();
 
-    lines.push(Line::from(vec![
-        Span::raw("  "),
-        Span::styled("● ", Style::default().fg(theme.accent)),
-        Span::styled(format!("CPU {cpu_temp}°C    "), Style::default().fg(theme.fg)),
-        Span::styled("● ", Style::default().fg(Color::Magenta)),
-        Span::styled(format!("GPU {gpu_temp}°C"), Style::default().fg(theme.fg)),
-    ]));
+    let cpu_info = TempSeriesInfo {
+        label: "CPU",
+        dot_color: theme.accent,
+        history: &cpu_history,
+        temp: cpu_temp,
+        rpm: cpu_rpm,
+        is_idle: false,
+    };
+    let gpu_dot_color = if is_suspended && gpu_temp == 0 {
+        theme.dim
+    } else {
+        Color::Magenta
+    };
+    let gpu_info = TempSeriesInfo {
+        label: "GPU",
+        dot_color: gpu_dot_color,
+        history: &gpu_history,
+        temp: gpu_temp,
+        rpm: gpu_rpm,
+        is_idle: is_suspended,
+    };
 
-    let chart_lines = render_temp_braille_chart(&cpu_history, &gpu_history, width, theme);
+    let chart_lines = render_two_temp_charts(&cpu_info, &gpu_info, width, theme);
     lines.extend(chart_lines);
 
     f.render_widget(Paragraph::new(lines), area);

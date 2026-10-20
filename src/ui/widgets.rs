@@ -401,130 +401,7 @@ pub fn render_hint_line(f: &mut Frame, area: Rect, hint_text: &str, theme: &Them
 }
 
 pub fn render_footer<B: Backend>(f: &mut Frame, area: Rect, app: &AppState<B>, theme: &Theme) {
-    let hint = app.get_active_hint();
-    if area.height >= 2 {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(area);
-        render_footer_two_rows(f, chunks[0], chunks[1], &hint, app, theme);
-    } else {
-        render_footer_two_rows(f, area, area, &hint, app, theme);
-    }
-}
-
-pub fn render_footer_two_rows<B: Backend>(
-    f: &mut Frame,
-    hint_area: Rect,
-    keys_area: Rect,
-    hint_text: &str,
-    app: &AppState<B>,
-    theme: &Theme,
-) {
-    let width = hint_area.width as usize;
-
-    // Row 1: Hint / Toast
-    let hint_line = if let Some((msg, is_error, _)) = &app.status_message {
-        if *is_error {
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(format!("[!] {msg}"), Style::default().fg(theme.err).add_modifier(Modifier::BOLD)),
-            ])
-        } else {
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(format!("✓ {msg}"), Style::default().fg(theme.ok).add_modifier(Modifier::BOLD)),
-            ])
-        }
-    } else if let Some((clamp_hint, _)) = &app.fan_clamp_hint {
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(clamp_hint.clone(), Style::default().fg(theme.warn)),
-        ])
-    } else {
-        let max_len = width.saturating_sub(6);
-        let clean_hint = if hint_text.chars().count() > max_len {
-            let truncated: String = hint_text.chars().take(max_len.saturating_sub(1)).collect();
-            format!("{truncated}…")
-        } else {
-            hint_text.to_string()
-        };
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(clean_hint, Style::default().fg(theme.dim)),
-        ])
-    };
-    f.render_widget(Paragraph::new(hint_line), hint_area);
-
-    // Row 2: Keys
-    let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
-        vec![
-            ("j/k", "slider"),
-            ("h/l", "adjust"),
-            ("Enter", "apply"),
-            ("Esc", "cancel"),
-        ]
-    } else {
-        match app.current_tab {
-            ActiveTab::Dashboard => vec![
-                ("p", "cycle profile"),
-                ("Tab", "next tab"),
-            ],
-            ActiveTab::Power => {
-                match app.power_selected_field {
-                    0..=2 => vec![("h/l", "cycle"), ("Space", "toggle")],
-                    3 => vec![("h/l", "adjust limit")],
-                    4 => vec![("Enter", "full charge")],
-                    _ => vec![],
-                }
-            }
-            ActiveTab::FanCurves => vec![
-                ("j/k", "point"),
-                ("h/l", "adjust"),
-                ("Space", "temp/speed"),
-                ("s", "preset"),
-                ("f", "fan"),
-                ("c", "custom"),
-                ("w", "apply"),
-            ],
-            ActiveTab::Aura => {
-                match app.aura_selected_field {
-                    0 => vec![("h/l", "brightness")],
-                    1 => vec![("h/l", "mode")],
-                    2 => vec![("h/l", "preset"), ("c", "picker"), ("#", "hex")],
-                    3..=5 => vec![("h/l", "adjust channel")],
-                    6 => vec![("h/l", "secondary preset")],
-                    7 => vec![("h/l", "speed")],
-                    8 => vec![("h/l", "direction")],
-                    9..=12 => vec![("h/l", "toggle"), ("Space", "toggle")],
-                    13 => vec![("h/l", "slash mode")],
-                    14 => vec![("h/l", "slash brightness")],
-                    _ => vec![("h/l", "adjust")],
-                }
-            }
-            ActiveTab::System => {
-                let has_auto_bright = app.sensors.screen_auto_brightness.is_some();
-                let export_row_idx = if has_auto_bright { 2 } else { 1 };
-                if app.system_selected_row == export_row_idx {
-                    vec![("Enter", "export report")]
-                } else {
-                    vec![("Space", "toggle")]
-                }
-            }
-        }
-    };
-
-    let mut left_spans = vec![Span::raw("  ")];
-    let mut left_len = 2;
-    for (k, a) in keybinds {
-        let entry_len = k.len() + a.len() + 3;
-        if left_len + entry_len < width.saturating_sub(18) {
-            left_spans.push(Span::styled(k, Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)));
-            left_spans.push(Span::raw(" "));
-            left_spans.push(Span::styled(format!("{a}  "), Style::default().fg(theme.dim)));
-            left_len += entry_len;
-        }
-    }
+    let width = area.width as usize;
 
     let right_spans = vec![
         Span::styled("?", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
@@ -536,6 +413,110 @@ pub fn render_footer_two_rows<B: Backend>(
     ];
     let right_len = 16;
 
+    let mut left_spans = vec![Span::raw("  ")];
+    let mut left_len = 2;
+
+    if let Some((msg, is_error, _)) = &app.status_message {
+        let max_msg_len = width.saturating_sub(right_len + 8);
+        let clean_msg = if msg.chars().count() > max_msg_len {
+            let truncated: String = msg.chars().take(max_msg_len.saturating_sub(1)).collect();
+            format!("{truncated}…")
+        } else {
+            msg.clone()
+        };
+        if *is_error {
+            left_spans.push(Span::styled(
+                format!("[!] {clean_msg}"),
+                Style::default().fg(theme.err).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            left_spans.push(Span::styled(
+                format!("✓ {clean_msg}"),
+                Style::default().fg(theme.ok).add_modifier(Modifier::BOLD),
+            ));
+        }
+        left_len += clean_msg.chars().count() + 4;
+    } else if let Some((clamp_hint, _)) = &app.fan_clamp_hint {
+        let max_hint_len = width.saturating_sub(right_len + 6);
+        let clean_hint = if clamp_hint.chars().count() > max_hint_len {
+            let truncated: String = clamp_hint.chars().take(max_hint_len.saturating_sub(1)).collect();
+            format!("{truncated}…")
+        } else {
+            clamp_hint.clone()
+        };
+        left_spans.push(Span::styled(clean_hint.clone(), Style::default().fg(theme.warn)));
+        left_len += clean_hint.chars().count();
+    } else {
+        let keybinds: Vec<(&str, &str)> = if app.show_color_picker_modal {
+            vec![
+                ("j/k", "slider"),
+                ("h/l", "adjust"),
+                ("Enter", "apply"),
+                ("Esc", "cancel"),
+            ]
+        } else {
+            match app.current_tab {
+                ActiveTab::Dashboard => vec![
+                    ("p", "cycle profile"),
+                    ("Tab", "next tab"),
+                ],
+                ActiveTab::Power => {
+                    match app.power_selected_field {
+                        0..=2 => vec![("h/l", "cycle"), ("Space", "toggle")],
+                        3 => vec![("h/l", "adjust limit")],
+                        4 => vec![("Enter", "full charge")],
+                        _ => vec![],
+                    }
+                }
+                ActiveTab::FanCurves => vec![
+                    ("j/k", "point"),
+                    ("h/l", "adjust"),
+                    ("Space", "temp/speed"),
+                    ("s", "preset"),
+                    ("f", "fan"),
+                    ("w", "apply"),
+                ],
+                ActiveTab::Aura => {
+                    match app.aura_selected_field {
+                        0 => vec![("h/l", "brightness")],
+                        1 => vec![("h/l", "mode")],
+                        2 => vec![("h/l", "preset"), ("c", "picker"), ("#", "hex")],
+                        3..=5 => vec![("h/l", "adjust channel")],
+                        6 => vec![("h/l", "secondary preset")],
+                        7 => vec![("h/l", "speed")],
+                        8 => vec![("h/l", "direction")],
+                        9..=12 => vec![("Space", "toggle")],
+                        13 => vec![("h/l", "slash mode")],
+                        14 => vec![("h/l", "slash brightness")],
+                        _ => vec![("h/l", "adjust")],
+                    }
+                }
+                ActiveTab::System => {
+                    let has_auto_bright = app.sensors.screen_auto_brightness.is_some();
+                    let export_row_idx = if has_auto_bright { 2 } else { 1 };
+                    if app.system_selected_row == export_row_idx {
+                        vec![("Enter", "export report")]
+                    } else {
+                        vec![("Space", "toggle")]
+                    }
+                }
+            }
+        };
+
+        for (k, a) in keybinds {
+            let entry_len = k.len() + a.len() + 3;
+            if left_len + entry_len < width.saturating_sub(right_len + 2) {
+                left_spans.push(Span::styled(
+                    k,
+                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                ));
+                left_spans.push(Span::raw(" "));
+                left_spans.push(Span::styled(format!("{a}  "), Style::default().fg(theme.dim)));
+                left_len += entry_len;
+            }
+        }
+    }
+
     let mut total_spans = left_spans;
     if width > left_len + right_len {
         let pad = width - left_len - right_len;
@@ -545,7 +526,18 @@ pub fn render_footer_two_rows<B: Backend>(
     }
     total_spans.extend(right_spans);
 
-    f.render_widget(Paragraph::new(Line::from(total_spans)), keys_area);
+    f.render_widget(Paragraph::new(Line::from(total_spans)), area);
+}
+
+pub fn render_footer_two_rows<B: Backend>(
+    f: &mut Frame,
+    _hint_area: Rect,
+    keys_area: Rect,
+    _hint_text: &str,
+    app: &AppState<B>,
+    theme: &Theme,
+) {
+    render_footer(f, keys_area, app, theme);
 }
 
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
