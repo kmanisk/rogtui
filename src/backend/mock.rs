@@ -195,6 +195,7 @@ impl MockBackend {
 }
 
 impl Backend for MockBackend {
+    fn persists_user_state(&self) -> bool { false }
     async fn get_platform_profile(&self) -> anyhow::Result<PlatformProfile> {
         let lock = self.state.lock().unwrap();
         Ok(lock.platform_profile)

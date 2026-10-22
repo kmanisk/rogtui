@@ -11,6 +11,8 @@ use types::{
 };
 
 pub trait Backend: Send + Sync + 'static {
+    /// Simulated hardware must not overwrite the user's persistent RGB state.
+    fn persists_user_state(&self) -> bool { true }
     fn get_platform_profile(&self) -> impl Future<Output = anyhow::Result<PlatformProfile>> + Send;
     fn set_platform_profile(&self, profile: PlatformProfile) -> impl Future<Output = anyhow::Result<()>> + Send;
     fn next_platform_profile(&self) -> impl Future<Output = anyhow::Result<()>> + Send;

@@ -101,6 +101,13 @@ pub fn stop_daemon() -> Result<bool> {
 }
 
 pub fn save_state<B: crate::backend::Backend>(app: &AppState<B>) -> Result<()> {
+    if !app.backend.persists_user_state() {
+        return Ok(());
+    }
+    save_state_at(app, &get_state_file_path())
+}
+
+pub fn save_state_at<B: crate::backend::Backend>(app: &AppState<B>, path: &std::path::Path) -> Result<()> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -115,15 +122,19 @@ pub fn save_state<B: crate::backend::Backend>(app: &AppState<B>) -> Result<()> {
         voice_sensitivity: app.voice_sensitivity,
         updated_at_ms: now_ms,
     };
-    let dir = get_state_dir();
-    let _ = fs::create_dir_all(&dir);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
     let serialized = toml::to_string(&state).context("Failed to serialize RGB daemon state")?;
-    fs::write(get_state_file_path(), serialized)?;
+    fs::write(path, serialized)?;
     Ok(())
 }
 
 pub fn load_state() -> Option<RgbDaemonState> {
-    let path = get_state_file_path();
+    load_state_at(&get_state_file_path())
+}
+
+pub fn load_state_at(path: &std::path::Path) -> Option<RgbDaemonState> {
     if let Ok(content) = fs::read_to_string(path) {
         toml::from_str(&content).ok()
     } else {

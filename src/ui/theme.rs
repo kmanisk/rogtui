@@ -85,10 +85,14 @@ impl Theme {
     /// resolves light theme neutral fallbacks, and boosts saturation/luminance so
     /// physical keyboard LED backlighting pops vividly without washing out.
     pub fn read_system_theme() -> (String, RgbColor) {
+        Self::read_system_theme_from_home(std::env::var_os("HOME").map(PathBuf::from).as_deref())
+    }
+
+    /// Read a theme from an explicit home without mutating process-wide environment.
+    pub fn read_system_theme_from_home(home: Option<&std::path::Path>) -> (String, RgbColor) {
         let mut theme_name = "Theme".to_string();
 
-        if let Ok(home) = std::env::var("HOME") {
-            let home_path = PathBuf::from(home);
+        if let Some(home_path) = home {
 
             // 1. Primary: Parse ~/.local/state/theme/colors.sh
             let colors_sh = home_path.join(".local/state/theme/colors.sh");

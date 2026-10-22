@@ -74,7 +74,7 @@ async fn run_check() -> anyhow::Result<()> {
                     "/org/freedesktop/DBus",
                     Some("org.freedesktop.DBus"),
                     "GetNameOwner",
-                    &("org.asuslinux.Daemon",),
+                    &("xyz.ljones.Asusd",),
                 )
                 .await;
             if asusd_reply.is_ok() {

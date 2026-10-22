@@ -1179,15 +1179,8 @@ export THEME_PURPLE=\"#bb9af7\"\n\
 export THEME_CYAN=\"#7dcfff\"\n";
     std::fs::write(state_theme_dir.join("colors.sh"), colors_content).expect("write colors.sh");
 
-    // Temporarily point HOME to temp_dir
-    let orig_home = std::env::var("HOME").ok();
-    std::env::set_var("HOME", &temp_dir);
-
-    let (theme_name, accent) = rogtui::ui::theme::Theme::read_system_theme();
-
-    if let Some(h) = orig_home {
-        std::env::set_var("HOME", h);
-    }
+    let (theme_name, accent) =
+        rogtui::ui::theme::Theme::read_system_theme_from_home(Some(&temp_dir));
     let _ = std::fs::remove_dir_all(&temp_dir);
 
     assert_eq!(theme_name, "tokyonight");
@@ -1618,20 +1611,21 @@ async fn test_external_rgb_state_sync_and_persistence() {
     app.active_software_effect = SoftwareEffect::AudioPulse;
 
     // Save initial state
-    rogtui::daemon::save_state(&app).expect("save state");
+    let dir = std::env::temp_dir().join(format!("rogtui-state-{}", std::process::id()));
+    let path = dir.join("rgb_state.toml");
+    rogtui::daemon::save_state_at(&app, &path).expect("save state");
 
     // Simulate external CLI or shortcut changing the state to RainbowWave with Cyberpunk
-    let mut external_state = rogtui::daemon::load_state().expect("load state");
+    let mut external_state = rogtui::daemon::load_state_at(&path).expect("load state");
     external_state.effect = SoftwareEffect::RainbowWave;
     external_state.color1 = RgbColor::new(255, 0, 128);
     external_state.aura_mode = 0;
 
-    let _dir = rogtui::daemon::get_state_dir();
     let serialized = toml::to_string(&external_state).expect("serialize");
-    std::fs::write(rogtui::daemon::get_state_file_path(), serialized).expect("write state");
+    std::fs::write(&path, serialized).expect("write state");
 
     // Reload state as app_loop does
-    let loaded = rogtui::daemon::load_state().expect("load updated");
+    let loaded = rogtui::daemon::load_state_at(&path).expect("load updated");
     assert_eq!(loaded.effect, SoftwareEffect::RainbowWave);
     assert_eq!(loaded.color1, RgbColor::new(255, 0, 128));
 
@@ -1639,6 +1633,8 @@ async fn test_external_rgb_state_sync_and_persistence() {
     app.aura_data.color1 = loaded.color1;
     assert_eq!(app.active_software_effect, SoftwareEffect::RainbowWave);
     assert_eq!(app.aura_data.color1, RgbColor::new(255, 0, 128));
+    std::fs::remove_file(path).expect("remove test state");
+    std::fs::remove_dir(dir).expect("remove test directory");
 }
 
 
