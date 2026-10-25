@@ -108,7 +108,7 @@ When calling `set_led_mode_data` on `xyz.ljones.Aura` via DBus:
 2. `asusd` writes to `/sys/class/leds/asus::kbd_backlight/kbd_rgb_mode` using `cmd = 1` (save to BIOS flash).
 3. Invoking DBus writes at 1 Hz causes unnecessary disk I/O, potential NVRAM wear, and DBus context-switching overhead.
 
-`rogtui` solves this by introducing direct volatile writes (`cmd = 0`) via [`RealBackend::write_volatile_rgb`](file:///home/manisk/Projects/rogtui/src/backend/real.rs):
+`rogtui` solves this by introducing direct volatile writes (`cmd = 0`) via [`RealBackend::write_volatile_rgb`](file:///home/onyx/Projects/rogtui/src/backend/real.rs):
 - **Fast Execution:** Updates in under 1 millisecond directly from user space.
 - **Zero Disk Writes:** Never writes to `/etc/asusd/aura_tuf.ron` during effect playback.
 - **Zero Flash Wear:** Modifies only EC volatile RAM registers.
