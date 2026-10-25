@@ -5,12 +5,12 @@
   <p>Like G-Helper, but built natively for your terminal. Fast, keyboard-driven, and zero bloat.</p>
 
   <p>
-    <a href="https://crates.io/crates/rogtui"><img src="https://img.shields.io/crates/v/rogtui.svg" alt="Crates.io" /></a>
-    <a href="https://github.com/kmanisk/rogtui/stargazers"><img src="https://img.shields.io/github/stars/kmanisk/rogtui?style=flat" alt="GitHub stars" /></a>
-    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue.svg" alt="License" /></a>
-    <a href="https://kernel.org"><img src="https://img.shields.io/badge/platform-Linux%20x86__64-lightgrey.svg" alt="Platform" /></a>
-    <img src="https://img.shields.io/badge/idle%20cpu-0.0%25-brightgreen.svg" alt="Idle CPU: 0.0%" />
-    <img src="https://img.shields.io/badge/memory-~4%20MB-brightgreen.svg" alt="Memory Footprint: ~4 MB" />
+    <a href="https://crates.io/crates/rogtui"><img src="https://img.shields.io/crates/v/rogtui?style=flat-square&logo=rust&logoColor=white" alt="Crates.io version" /></a>
+    <a href="https://crates.io/crates/rogtui"><img src="https://img.shields.io/crates/d/rogtui?style=flat-square&logo=rust&logoColor=white" alt="Crates.io downloads" /></a>
+    <a href="https://github.com/kmanisk/rogtui/stargazers"><img src="https://img.shields.io/github/stars/kmanisk/rogtui?style=flat-square&logo=github" alt="GitHub stars" /></a>
+    <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=flat-square" alt="License: MIT OR Apache-2.0" /></a>
+    <img src="https://img.shields.io/badge/platform-Linux-lightgrey?style=flat-square&logo=linux&logoColor=white" alt="Platform: Linux" />
+    <img src="https://img.shields.io/badge/Rust-2021-000000?style=flat-square&logo=rust&logoColor=white" alt="Rust 2021" />
   </p>
 </div>
 
