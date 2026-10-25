@@ -6,6 +6,7 @@
 
   <p>
     <a href="https://crates.io/crates/rogtui"><img src="https://img.shields.io/crates/v/rogtui.svg" alt="Crates.io" /></a>
+    <a href="https://github.com/kmanisk/rogtui/stargazers"><img src="https://img.shields.io/github/stars/kmanisk/rogtui?style=flat" alt="GitHub stars" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue.svg" alt="License" /></a>
     <a href="https://kernel.org"><img src="https://img.shields.io/badge/platform-Linux%20x86__64-lightgrey.svg" alt="Platform" /></a>
     <img src="https://img.shields.io/badge/idle%20cpu-0.0%25-brightgreen.svg" alt="Idle CPU: 0.0%" />
@@ -83,7 +84,7 @@ cargo install rogtui
 ### Arch Linux / CachyOS (Local PKGBUILD)
 
 ```bash
-git clone https://github.com/manisk/rogtui.git
+git clone https://github.com/kmanisk/rogtui.git
 cd rogtui
 makepkg -si
 ```
@@ -93,7 +94,7 @@ makepkg -si
 Requires Rust 1.80+:
 
 ```bash
-git clone https://github.com/manisk/rogtui.git
+git clone https://github.com/kmanisk/rogtui.git
 cd rogtui
 cargo build --release
 install -Dm755 target/release/rogtui ~/.local/bin/rogtui
